@@ -59,10 +59,23 @@ export default function RecordingPanel({
 
     try {
       const formData = new FormData()
-      formData.append('file', audioBlob, 'recording.webm')
+      // Use webm for live recordings, but ensure proper filename
+      const filename = audioBlob.type.includes('webm') ? 'recording.webm' : 'recording.mp3'
+      formData.append('file', audioBlob, filename)
+
+      console.log(`Transcribing audio: ${filename}, size: ${(audioBlob.size / 1024).toFixed(2)}KB, type: ${audioBlob.type}`)
 
       const response = await axios.post(`${API_URL}/transcribe/file?validate=true`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
+        headers: { 
+          'Content-Type': 'multipart/form-data'
+        },
+        timeout: 300000, // 5 minute timeout
+        onUploadProgress: (progressEvent) => {
+          if (progressEvent.total) {
+            const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total)
+            console.log(`Upload progress: ${percentCompleted}%`)
+          }
+        }
       })
 
       const transcriptText = response.data.transcript
@@ -71,9 +84,10 @@ export default function RecordingPanel({
 
       // Auto-process
       await processTranscript(transcriptText)
-    } catch (error) {
+    } catch (error: any) {
       console.error('Transcription error:', error)
-      alert('Transcription failed. Check that your backend is running and API keys are set.')
+      const errorMessage = error.response?.data?.detail || error.message || 'Unknown error'
+      alert(`Transcription failed: ${errorMessage}\n\nCheck:\n1. Backend is running on ${API_URL}\n2. OpenAI API key is set\n3. Microphone permissions are granted`)
     } finally {
       setIsProcessing(false)
       onProcessingChange(false)
@@ -84,6 +98,13 @@ export default function RecordingPanel({
     const file = e.target.files?.[0]
     if (!file) return
 
+    // Check file size (100MB limit)
+    const maxSize = 100 * 1024 * 1024 // 100MB
+    if (file.size > maxSize) {
+      alert(`File is too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Maximum size is 100MB.`)
+      return
+    }
+
     setIsProcessing(true)
     onProcessingChange(true)
 
@@ -91,15 +112,30 @@ export default function RecordingPanel({
       const formData = new FormData()
       formData.append('file', file)
 
-      const response = await axios.post(`${API_URL}/transcribe/file?validate=true`, formData)
+      console.log(`Uploading file: ${file.name}, size: ${(file.size / 1024 / 1024).toFixed(2)}MB, type: ${file.type}`)
+
+      const response = await axios.post(`${API_URL}/transcribe/file?validate=true`, formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+        timeout: 300000, // 5 minute timeout for large files
+        onUploadProgress: (progressEvent) => {
+          if (progressEvent.total) {
+            const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total)
+            console.log(`Upload progress: ${percentCompleted}%`)
+          }
+        }
+      })
+
       const transcriptText = response.data.transcript
       setTranscript(transcriptText)
       onTranscriptUpdate(transcriptText)
 
       await processTranscript(transcriptText)
-    } catch (error) {
+    } catch (error: any) {
       console.error('Upload error:', error)
-      alert('File upload failed. Check backend connection.')
+      const errorMessage = error.response?.data?.detail || error.message || 'Unknown error'
+      alert(`File upload failed: ${errorMessage}\n\nCheck:\n1. Backend is running on ${API_URL}\n2. File format is supported (mp3, wav, webm, etc.)\n3. File size is under 100MB`)
     } finally {
       setIsProcessing(false)
       onProcessingChange(false)

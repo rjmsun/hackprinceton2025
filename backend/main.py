@@ -22,10 +22,10 @@ load_dotenv()
 
 app = FastAPI(title="EVE API")
 
-# CORS
+# CORS - Allow all origins for development
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[os.getenv("FRONTEND_URL", "http://localhost:3000")],
+    allow_origins=["*"],  # Allow all origins for file uploads
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -99,9 +99,12 @@ async def root():
 async def transcribe_audio_file(file: UploadFile = File(...), validate: bool = True):
     """Upload audio file for transcription with optional fact-checking"""
     try:
-                # Stream-friendly: use underlying file object instead of reading all to memory
-                file.file.seek(0)
-                transcript = await transcription_service.transcribe_file_obj(file.file, file.filename)
+        # Log file info for debugging
+        print(f"Received file: {file.filename}, content_type: {file.content_type}, size: {file.size if hasattr(file, 'size') else 'unknown'}")
+        
+        # Stream-friendly: use underlying file object instead of reading all to memory
+        file.file.seek(0)
+        transcript = await transcription_service.transcribe_file_obj(file.file, file.filename or "audio.mp3")
         
         # Fact-check and enhance transcript using GPT-4o
         if validate:
@@ -109,7 +112,9 @@ async def transcribe_audio_file(file: UploadFile = File(...), validate: bool = T
         
         return {"transcript": transcript, "status": "success", "validated": validate}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        error_msg = str(e)
+        print(f"Transcription error: {error_msg}")
+        raise HTTPException(status_code=500, detail=f"Transcription failed: {error_msg}")
 
 @app.post("/process/transcript")
 async def process_transcript(request: TranscriptRequest):

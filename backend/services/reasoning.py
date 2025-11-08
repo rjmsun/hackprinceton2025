@@ -51,7 +51,7 @@ Raw transcript:
     
     async def extract_tasks(self, sections: List[Dict], timezone: str = "America/New_York") -> Dict:
         """Extract actionable tasks using Claude 3.5"""
-                prompt = f"""Input: cleaned transcript sections (JSON). 
+        prompt = f"""Input: cleaned transcript sections (JSON). 
 Task: From the transcript, extract all actionable items, decisions, and commitments. For each item, produce:
 - id: short unique id
 - action: concise action description
@@ -70,37 +70,37 @@ Timezone: {timezone}
 Here is the input:
 {json.dumps(sections, indent=2)}"""
 
-                # Prefer Anthropic if available, else fall back to OpenAI
-                if self.anthropic_client:
-                    try:
-                        message = self.anthropic_client.messages.create(
-                            model="claude-3-5-sonnet-20241022",
-                            max_tokens=1500,
-                            temperature=0.0,
-                            system="You are an exacting task extraction engine. Produce only JSON that conforms to the schema. Attempt to resolve natural-language dates into ISO 8601 where possible. If no explicit date is present, set \"due\": null and \"date_hint\": \"<text hint>\". Add a \"confidence\" (0.0–1.0).",
-                            messages=[{"role": "user", "content": prompt}]
-                        )
-                        result = message.content[0].text
-                        return json.loads(result)
-                    except Exception:
-                        # fall through to OpenAI fallback
-                        pass
-                
-                if self.openai_client:
-                    response = self.openai_client.chat.completions.create(
-                        model="gpt-4o",
-                        messages=[
-                            {"role": "system", "content": "You are an exacting task extraction engine. Return only valid JSON matching the schema with keys: tasks: [ {id, action, context, due, date_hint, owner, priority, confidence, source_section} ]. Resolve natural-language dates using the timezone provided."},
-                            {"role": "user", "content": f"Timezone: {timezone}\n\n{prompt}"}
-                        ],
-                        temperature=0.0,
-                        max_tokens=1500
-                    )
-                    result = response.choices[0].message.content
-                    return json.loads(result)
-                
-                # As last resort, return an empty list rather than failing
-                return {"tasks": []}
+        # Prefer Anthropic if available, else fall back to OpenAI
+        if self.anthropic_client:
+            try:
+                message = self.anthropic_client.messages.create(
+                    model="claude-3-5-sonnet-20241022",
+                    max_tokens=1500,
+                    temperature=0.0,
+                    system="You are an exacting task extraction engine. Produce only JSON that conforms to the schema. Attempt to resolve natural-language dates into ISO 8601 where possible. If no explicit date is present, set \"due\": null and \"date_hint\": \"<text hint>\". Add a \"confidence\" (0.0–1.0).",
+                    messages=[{"role": "user", "content": prompt}]
+                )
+                result = message.content[0].text
+                return json.loads(result)
+            except Exception:
+                # fall through to OpenAI fallback
+                pass
+        
+        if self.openai_client:
+            response = self.openai_client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "system", "content": "You are an exacting task extraction engine. Return only valid JSON matching the schema with keys: tasks: [ {id, action, context, due, date_hint, owner, priority, confidence, source_section} ]. Resolve natural-language dates using the timezone provided."},
+                    {"role": "user", "content": f"Timezone: {timezone}\n\n{prompt}"}
+                ],
+                temperature=0.0,
+                max_tokens=1500
+            )
+            result = response.choices[0].message.content
+            return json.loads(result)
+        
+        # As last resort, return an empty list rather than failing
+        return {"tasks": []}
     
     async def create_event_suggestion(self, task: Dict, timezone: str) -> Dict:
         """Create calendar event suggestion from task"""
@@ -155,32 +155,73 @@ Return only the question text, no JSON."""
         return response.choices[0].message.content.strip('"')
     
     async def generate_summary(self, sections: List[Dict], tasks: List[Dict]) -> Dict:
-        """Generate short and detailed summaries"""
-        prompt = f"""Input: full meeting transcript sections and tasks list.
-Tasks:
-1) short_summary: 1 sentence
-2) detailed_summary: 3-6 bullets that cover decisions, tasks, and risks.
+        """Generate smart summary with GPT-4o that analyzes content and prompts for more information"""
+        if not self.openai_client:
+            return {
+                "short_summary": "[DEMO] Add OPENAI_API_KEY for summaries",
+                "detailed_summary": [],
+                "insights": [],
+                "clarifying_questions": []
+            }
+        
+        prompt = f"""You are an intelligent meeting/conversation analyzer. Analyze this transcript deeply and provide:
 
-Return JSON: {{ "short_summary": "...", "detailed_summary": ["...", "..."] }}
+1. **short_summary**: One compelling sentence that captures the core essence
+2. **detailed_summary**: 4-6 specific bullet points covering:
+   - Key decisions made
+   - Important tasks identified  
+   - Risks or concerns raised
+   - Next steps mentioned
+3. **insights**: 3-5 analytical observations about:
+   - Communication patterns
+   - Underlying themes or priorities
+   - Potential gaps or missing information
+   - Strategic implications
+4. **clarifying_questions**: 3-4 probing questions that would provide valuable context:
+   - About timeline/deadlines
+   - About ownership/responsibility
+   - About scope or requirements
+   - About dependencies or blockers
 
-Sections:
+Be highly analytical - read between the lines, identify what's NOT said, spot patterns, and think strategically about what additional information would be most valuable.
+
+Return JSON: {{
+  "short_summary": "...",
+  "detailed_summary": ["...", "...", "...", "..."],
+  "insights": ["...", "...", "..."],
+  "clarifying_questions": ["...", "...", "..."]
+}}
+
+Transcript Sections:
 {json.dumps(sections, indent=2)}
 
-Tasks:
+Extracted Tasks:
 {json.dumps(tasks, indent=2)}"""
 
         response = self.openai_client.chat.completions.create(
             model="gpt-4o",
             messages=[
-                {"role": "system", "content": "Produce two outputs: short_summary (1 sentence) and detailed_summary (array of 3–6 bullet points). Keep tone professional and neutral. Return only valid JSON."},
+                {"role": "system", "content": "You are an intelligent meeting analyzer. Analyze transcripts deeply, identify patterns, gaps, and areas needing clarification. Return only valid JSON with short_summary, detailed_summary, insights, and clarifying_questions."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.1,
-            max_tokens=400
+            temperature=0.3,
+            max_tokens=800,
+            response_format={"type": "json_object"}
         )
         
         result = response.choices[0].message.content
-        return json.loads(result)
+        if not result:
+            raise Exception("OpenAI returned empty response")
+        
+        summary_data = json.loads(result)
+        
+        # Ensure all fields exist
+        return {
+            "short_summary": summary_data.get("short_summary", ""),
+            "detailed_summary": summary_data.get("detailed_summary", []),
+            "insights": summary_data.get("insights", []),
+            "clarifying_questions": summary_data.get("clarifying_questions", [])
+        }
     
     async def generate_voice_summary(self, actions: List[Dict]) -> str:
         """Generate spoken summary text"""

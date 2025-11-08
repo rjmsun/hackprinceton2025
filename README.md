@@ -80,6 +80,13 @@ python main.py
 You should see:
 ```
 INFO:     Uvicorn running on http://0.0.0.0:8000
+INFO:     Application startup complete.
+```
+
+**Verify backend is running:**
+```bash
+curl http://localhost:8000/
+# Should return: {"status":"EVE API running","version":"1.0.0"}
 ```
 
 **Terminal 2 - Start Frontend:**
@@ -92,10 +99,15 @@ You should see:
 ```
   ▲ Next.js 14.0.3
   - Local:        http://localhost:3000
+  ✓ Ready in 2.3s
 ```
 
 **Open your browser:**
 👉 **http://localhost:3000**
+
+**To stop the services:**
+- Press `Ctrl+C` in each terminal
+- Or kill processes: `lsof -ti:8000 | xargs kill -9` and `lsof -ti:3000 | xargs kill -9`
 
 ---
 

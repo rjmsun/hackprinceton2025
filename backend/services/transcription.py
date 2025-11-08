@@ -7,29 +7,34 @@ class TranscriptionService:
         self.api_key = api_key
         self.client = openai.OpenAI(api_key=api_key) if api_key and api_key != "your_openai_api_key_here" else None
         self.stream_buffer = []
+    
+    async def transcribe_file_obj(self, file_obj, filename: str) -> str:
+        """Transcribe using a file-like object to support large uploads without loading into memory."""
+        if not self.client:
+            return "[DEMO MODE] Transcription placeholder - add OPENAI_API_KEY to .env"
+        try:
+            # Ensure file is at the beginning
+            file_obj.seek(0)
             
-            async def transcribe_file_obj(self, file_obj, filename: str) -> str:
-                """Transcribe using a file-like object to support large uploads without loading into memory."""
-                if not self.client:
-                    return "[DEMO MODE] Transcription placeholder - add OPENAI_API_KEY to .env"
-                try:
-                    # the OpenAI SDK accepts a file-like object; ensure it has a name attr
-                    try:
-                        getattr(file_obj, "name")
-                    except Exception:
-                        # best-effort assign a name for content-type inference
-                        try:
-                            file_obj.name = filename
-                        except Exception:
-                            pass
-                    transcript = self.client.audio.transcriptions.create(
-                        model="whisper-1",
-                        file=file_obj,
-                        response_format="text"
-                    )
-                    return transcript
-                except Exception as e:
-                    raise Exception(f"Transcription failed: {str(e)}")
+            # Read the file data into bytes for OpenAI SDK compatibility
+            audio_data = file_obj.read()
+            
+            # Create BytesIO object with proper name attribute
+            audio_file = io.BytesIO(audio_data)
+            audio_file.name = filename or "audio.webm"
+            
+            print(f"Transcribing file: {filename}, size: {len(audio_data)} bytes")
+            
+            transcript = self.client.audio.transcriptions.create(
+                model="whisper-1",
+                file=audio_file,
+                response_format="text"
+            )
+            return transcript
+        except Exception as e:
+            error_msg = str(e)
+            print(f"Transcription error for {filename}: {error_msg}")
+            raise Exception(f"Transcription failed: {error_msg}")
     
     async def transcribe_file(self, audio_data: bytes, filename: str) -> str:
         """Transcribe uploaded audio file using Whisper"""
