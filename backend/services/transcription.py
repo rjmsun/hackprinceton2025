@@ -27,6 +27,28 @@ class TranscriptionService:
         except Exception as e:
             raise Exception(f"Transcription failed: {str(e)}")
     
+    async def validate_and_enhance_transcript(self, transcript: str) -> str:
+        """Fact-check and enhance transcript using GPT-4o"""
+        if not self.client:
+            return transcript
+        
+        try:
+            response = self.client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "system", "content": "You are a transcript validator. Check for transcription errors, fix obvious mistakes (e.g., 'CS214' not 'see 214'), correct technical terms, and improve clarity while preserving the original meaning. Return only the corrected transcript text."},
+                    {"role": "user", "content": f"Review and correct this transcript:\n\n{transcript}"}
+                ],
+                temperature=0.1,
+                max_tokens=2000
+            )
+            
+            enhanced = response.choices[0].message.content
+            return enhanced if enhanced else transcript
+        except Exception as e:
+            # If validation fails, return original
+            return transcript
+    
     async def transcribe_stream(self, audio_chunk: bytes) -> Optional[str]:
         """
         Stream transcription - for real-time processing
