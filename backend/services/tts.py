@@ -10,7 +10,7 @@ class TTSService:
     
     async def text_to_speech(self, text: str, voice_id: Optional[str] = None) -> bytes:
         """Convert text to speech using ElevenLabs"""
-        if not self.api_key or self.api_key == "your_elevenlabs_api_key_here" or not self.api_key.startswith(("eleven_", "sk-")):
+        if not self.api_key or self.api_key == "your_elevenlabs_api_key_here":
             # Fallback for demo without API key
             return b"[DEMO MODE] Add ELEVENLABS_API_KEY for voice synthesis"
         
@@ -26,7 +26,7 @@ class TTSService:
         
         data = {
             "text": text,
-            "model_id": "eleven_monolingual_v1",
+            "model_id": "eleven_turbo_v2_5",  # Updated model for free tier
             "voice_settings": {
                 "stability": 0.5,
                 "similarity_boost": 0.75

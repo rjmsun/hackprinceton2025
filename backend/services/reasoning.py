@@ -40,10 +40,13 @@ Raw transcript:
                 {"role": "user", "content": prompt}
             ],
             temperature=0.0,
-            max_tokens=1200
+            max_tokens=1200,
+            response_format={"type": "json_object"}
         )
         
         result = response.choices[0].message.content
+        if not result:
+            raise Exception("OpenAI returned empty response")
         return json.loads(result)
     
     async def extract_tasks(self, sections: List[Dict], timezone: str = "America/New_York") -> Dict:
