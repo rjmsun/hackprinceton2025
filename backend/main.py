@@ -15,8 +15,6 @@ from services.calendar_service import CalendarService
 from services.tts import TTSService
 from services.analytics import AnalyticsService
 from services.gemini_service import GeminiService
-from services.snowflake_service import SnowflakeService
-from services.coffee_chat import CoffeeChatService
 
 load_dotenv()
 
@@ -44,8 +42,6 @@ calendar_service = CalendarService(
 tts_service = TTSService(api_key=os.getenv("ELEVENLABS_API_KEY"))
 analytics_service = AnalyticsService(api_key=os.getenv("AMPLITUDE_API_KEY"))
 gemini_service = GeminiService(api_key=os.getenv("GEMINI_API_KEY"))
-snowflake_service = SnowflakeService()
-coffee_service = CoffeeChatService(openai_key=os.getenv("OPENAI_API_KEY"))
 
 # Models
 class TranscriptRequest(BaseModel):
@@ -53,35 +49,7 @@ class TranscriptRequest(BaseModel):
     user_id: Optional[str] = "default"
     timezone: Optional[str] = "America/New_York"
 
-class VisionMetrics(BaseModel):
-    face_detected: Optional[bool] = None
-    smile_confidence: Optional[float] = None
-    eye_contact_confidence: Optional[float] = None
-    avg_head_angle_degrees: Optional[float] = None
-    nod_count: Optional[int] = None
-    frame_count: Optional[int] = None
 
-class AudioFeatures(BaseModel):
-    avg_pitch: Optional[float] = None
-    energy: Optional[float] = None
-    speech_rate: Optional[float] = None
-    sentiment: Optional[float] = None
-
-class CoffeeProcessRequest(BaseModel):
-    text: str
-    user_id: Optional[str] = "default"
-    timezone: Optional[str] = "America/New_York"
-    vision_metrics: Optional[VisionMetrics] = None
-    audio_features: Optional[AudioFeatures] = None
-    store: Optional[bool] = False
-    calendar_access_token: Optional[str] = None
-
-class FollowupDraftRequest(BaseModel):
-    person_name: Optional[str] = None
-    company: Optional[str] = None
-    highlights: List[str] = []
-    ask: Optional[str] = None
-    vibe_label: str = "Solid"
 
 class TaskApproval(BaseModel):
     task_id: str
@@ -289,44 +257,7 @@ async def get_gemini_summary(request: TranscriptRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/snowflake/store")
-async def store_in_snowflake(request: TranscriptRequest):
-    """Store transcript and data in Snowflake"""
-    try:
-        # Get processed data
-        cleaned = await reasoning_service.clean_transcript(request.text)
-        tasks = await reasoning_service.extract_tasks(cleaned["sections"], timezone=request.timezone)
-        summary = await reasoning_service.generate_summary(cleaned["sections"], tasks["tasks"])
-        
-        # Store in Snowflake
-        success = snowflake_service.store_transcript(
-            user_id=request.user_id,
-            transcript=request.text,
-            summary=summary,
-            tasks=tasks["tasks"]
-        )
-        
-        return {"status": "success" if success else "snowflake_not_configured", "stored": success}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/snowflake/conversations/{user_id}")
-async def get_conversations(user_id: str, limit: int = 10):
-    """Get user's conversation history from Snowflake"""
-    try:
-        conversations = snowflake_service.get_user_conversations(user_id, limit)
-        return {"conversations": conversations, "status": "success"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/snowflake/test")
-async def test_snowflake():
-    """Test Snowflake connection"""
-    try:
-        connected = snowflake_service.test_connection()
-        return {"connected": connected, "status": "success" if connected else "not_configured"}
-    except Exception as e:
-        return {"connected": False, "error": str(e), "status": "error"}
 
 @app.websocket("/ws/realtime")
 async def websocket_realtime(websocket: WebSocket):
@@ -392,104 +323,7 @@ async def websocket_realtime(websocket: WebSocket):
             "message": str(e)
         })
 
-# New coffee chat processing endpoint
-@app.post("/coffee/process")
-async def process_coffee_chat(request: CoffeeProcessRequest):
-    try:
-        # 0) Validate and fact-check transcript (GPT-4o)
-        validated_text = await transcription_service.validate_and_enhance_transcript(request.text)
-        
-        # 1) Clean transcript (GPT-4o)
-        cleaned = await reasoning_service.clean_transcript(validated_text)
 
-        # 2) Tasks via structured extraction
-        tasks_dict = await reasoning_service.extract_tasks(cleaned["sections"], timezone=request.timezone)
-        tasks = tasks_dict.get("tasks", [])
-
-        # 3) Tips, follow-ups, content evidence
-        tips_block = coffee_service.extract_tips_and_followups(cleaned["sections"]) or {}
-        tips = tips_block.get("tips", [])
-        follow_ups = tips_block.get("follow_ups", [])
-        content_evidence = tips_block.get("content_evidence", [])
-
-        # 4) Content score
-        content_score = coffee_service.compute_content_score(tips, follow_ups, content_evidence)
-
-        # 5) Vibe components
-        vision_dict = request.vision_metrics.dict() if request.vision_metrics else None
-        audio_dict = request.audio_features.dict() if request.audio_features else None
-        vibe = coffee_service.combine_vibe(vision_dict, audio_dict, content_score)
-
-        # 6) Summary and coaching (TTS text)
-        coach = coffee_service.generate_coaching_and_spoken(tasks, tips, vibe.get("vibe_label", "Solid")) or {}
-
-        # 7) Optional: create calendar events for due-dated tasks
-        created_events: List[Dict[str, Any]] = []
-        if request.calendar_access_token:
-            for task in tasks:
-                if task.get("due"):
-                    event_suggestion = await reasoning_service.create_event_suggestion(task, timezone=request.timezone)
-                    if event_suggestion.get("event_suggestion") and event_suggestion.get("event_suggestion", {}).get("start_time"):
-                        evt = await calendar_service.create_event(request.calendar_access_token, event_suggestion["event_suggestion"])
-                        created_events.append({"task_id": task.get("id"), **evt})
-
-        # 8) Optional store to Snowflake
-        audio_tts_url = None  # placeholder; streaming TTS endpoint returns bytes
-        final_summary = await reasoning_service.generate_summary(cleaned["sections"], tasks)
-
-        if request.store:
-            try:
-                snowflake_service.store_transcript(
-                    user_id=request.user_id,
-                    transcript=request.text,
-                    summary={
-                        "summary": final_summary,
-                        "coach": coach,
-                        "vibe": vibe,
-                        "tips": tips,
-                        "follow_ups": follow_ups,
-                    },
-                    tasks=tasks,
-                )
-            except Exception:
-                pass
-
-        session_payload = {
-            "session_id": f"s-{datetime.utcnow().timestamp()}",
-            "transcript": request.text,
-            "sections": cleaned.get("sections", []),
-            "tasks": tasks,
-            "tips": tips,
-            "follow_ups": follow_ups,
-            "vibe": {
-                "score": vibe.get("vibe_score"),
-                "label": vibe.get("vibe_label"),
-                "components": vibe.get("components"),
-                "evidence": [e.get("text") for e in content_evidence][:5],
-            },
-            "audio_tts": audio_tts_url,
-            "created_events": created_events,
-            "metadata": {"duration_s": None, "consent": True},
-            "coach": coach,
-        }
-
-        return {"status": "success", "data": session_payload}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/followup/draft")
-async def draft_followup(request: FollowupDraftRequest):
-    try:
-        email = coffee_service.draft_followup_email(
-            person_name=request.person_name,
-            company=request.company,
-            highlights=request.highlights,
-            ask=request.ask,
-            vibe_label=request.vibe_label,
-        )
-        return {"status": "success", "email": email}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn
