@@ -1,0 +1,22 @@
+{
+  "name": "eve-hackprinceton",
+  "version": "1.0.0",
+  "description": "EVE: The Everyday Virtual Executive - AI Productivity Companion",
+  "scripts": {
+    "start": "./start.sh",
+    "install-all": "./install.sh",
+    "test-keys": "./test-api-keys.sh",
+    "backend": "cd backend && source venv/bin/activate && python main.py",
+    "frontend": "cd frontend && npm run dev"
+  },
+  "keywords": [
+    "ai",
+    "productivity",
+    "openai",
+    "anthropic",
+    "hackathon"
+  ],
+  "author": "HackPrinceton 2025 Team",
+  "license": "MIT"
+}
+

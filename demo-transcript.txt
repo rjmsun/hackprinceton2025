@@ -1,0 +1,12 @@
+Hey team, thanks for joining today's planning session. I wanted to go over our hackathon project timeline. 
+
+First off, we need to finalize the API documentation by Friday at 3 PM. Maya, can you take the lead on that? It's critical for our demo.
+
+Next, we should schedule a demo review meeting for Monday afternoon, let's say around 2 PM. We need everyone there to give feedback before the final submission.
+
+Also, don't forget we have that backend integration task. Alex mentioned it last time - we need to connect the transcription service to the database. Let's target that for Thursday.
+
+One more thing - we should prepare a 2-minute pitch for the judges. That's high priority and needs to be done by Saturday morning at the latest.
+
+I think that covers the main action items. Any questions?
+
