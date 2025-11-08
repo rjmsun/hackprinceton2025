@@ -17,9 +17,30 @@ export default function Home() {
       <div className="container mx-auto px-4 py-8">
         {/* Header */}
         <header className="text-center mb-12">
-          <h1 className="text-5xl font-bold text-gray-900 mb-4">
-            EVE
-          </h1>
+          <div className="flex justify-center items-center mb-4">
+            <img 
+              src="/logo.svg" 
+              alt="EVE Logo" 
+              className="h-20 w-20 object-contain"
+              onError={(e) => {
+                // Try alternative formats if SVG doesn't exist
+                const formats = ['png', 'jpg', 'jpeg', 'webp'];
+                const currentSrc = e.currentTarget.src;
+                const basePath = currentSrc.substring(0, currentSrc.lastIndexOf('.'));
+                let formatIndex = 0;
+                
+                const tryNextFormat = () => {
+                  if (formatIndex < formats.length) {
+                    e.currentTarget.src = `${basePath}.${formats[formatIndex]}`;
+                    formatIndex++;
+                  }
+                };
+                
+                e.currentTarget.onerror = tryNextFormat;
+                tryNextFormat();
+              }}
+            />
+          </div>
           <p className="text-xl text-gray-600">
             Your Everyday Virtual Executive
           </p>

@@ -1,11 +1,18 @@
 <svg width="200" height="200" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <circle cx="100" cy="100" r="90" fill="url(#gradient)" />
-  <defs>
-    <linearGradient id="gradient" x1="0" y1="0" x2="200" y2="200">
-      <stop offset="0%" stop-color="#667eea" />
-      <stop offset="100%" stop-color="#764ba2" />
-    </linearGradient>
-  </defs>
-  <text x="100" y="120" font-family="Arial, sans-serif" font-size="72" font-weight="bold" fill="white" text-anchor="middle">EVE</text>
+  <!-- Lowercase 'e' with rounded, modern style -->
+  <path d="M 50 100 Q 50 50 100 50 Q 150 50 150 100 Q 150 120 140 130 Q 130 140 110 140 Q 90 140 75 130 L 75 110 L 125 110 Q 135 110 135 100 Q 135 90 125 90 L 75 90 L 75 70 Q 85 60 100 60 Q 115 60 125 70" 
+        stroke="#2D3748" 
+        stroke-width="14" 
+        stroke-linecap="round" 
+        stroke-linejoin="round" 
+        fill="none"/>
+  
+  <!-- Teal horizontal line cutting through center -->
+  <line x1="40" y1="100" x2="170" y2="100" 
+        stroke="#14B8A6" 
+        stroke-width="10" 
+        stroke-linecap="round"/>
+  
+  <!-- Teal dot at the end -->
+  <circle cx="170" cy="100" r="8" fill="#14B8A6"/>
 </svg>
-
