@@ -34,8 +34,7 @@ app.add_middleware(
 # Services
 transcription_service = TranscriptionService(api_key=os.getenv("OPENAI_API_KEY"))
 reasoning_service = ReasoningService(
-    openai_key=os.getenv("OPENAI_API_KEY"),
-    anthropic_key=os.getenv("ANTHROPIC_API_KEY")
+    openai_key=os.getenv("OPENAI_API_KEY")
 )
 calendar_service = CalendarService(
     client_id=os.getenv("GOOGLE_CLIENT_ID"),
@@ -132,14 +131,13 @@ async def process_transcript(request: TranscriptRequest):
             timezone=request.timezone
         )
         
-        # Step 3: Generate summary (GPT-4o)
-        summary = await reasoning_service.generate_summary(
+        # Step 3: Generate DUAL summaries (OpenAI + Gemini)
+        openai_summary = await reasoning_service.generate_summary(
             cleaned["sections"], 
             tasks["tasks"]
         )
         
-        # Step 4: Cross-validate with Gemini for additional insights
-        gemini_insights = await gemini_service.extract_insights(validated_text)
+        gemini_summary = await gemini_service.generate_summary_gemini(validated_text)
         
         # Log to analytics
         analytics_service.track_event(
@@ -154,8 +152,9 @@ async def process_transcript(request: TranscriptRequest):
         return {
             "cleaned": cleaned,
             "tasks": tasks["tasks"],
-            "summary": summary,
-            "gemini_insights": gemini_insights.get("insights", {}),
+            "summary_openai": openai_summary,
+            "summary_gemini": gemini_summary,
+            "summary": openai_summary,  # Default for backward compatibility
             "status": "success"
         }
     except Exception as e:
@@ -328,69 +327,49 @@ async def test_snowflake():
     except Exception as e:
         return {"connected": False, "error": str(e), "status": "error"}
 
-@app.websocket("/ws/realtime")
 async def websocket_realtime(websocket: WebSocket):
-    """WebSocket for real-time audio streaming and transcription"""
+    """(Refactored) WebSocket for live transcription. Processing is now on-demand."""
     await websocket.accept()
+    print("[WS] Client connected for live transcription.")
+    accumulated_transcript = []
     
     try:
-        buffer = []
         while True:
             data = await websocket.receive()
             
             if "bytes" in data:
-                # Audio chunk received
-                audio_chunk = data["bytes"]
-                buffer.append(audio_chunk)
-                
-                # Stream transcription
-                transcript = await transcription_service.transcribe_stream(audio_chunk)
-                
-                if transcript:
+                transcript_chunk = await transcription_service.transcribe_stream(data["bytes"])
+                if transcript_chunk:
+                    accumulated_transcript.append(transcript_chunk)
                     await websocket.send_json({
-                        "type": "transcript",
-                        "data": transcript,
-                        "timestamp": datetime.utcnow().isoformat()
+                        "type": "partial_transcript",
+                        "full_transcript": " ".join(accumulated_transcript),
                     })
                     
             elif "text" in data:
                 message = json.loads(data["text"])
-                
-                if message.get("action") == "process":
-                    # Process accumulated transcript
-                    full_transcript = message.get("transcript", "")
+                if message.get("action") == "stop":
+                    print("[WS] Stop received. Finalizing transcript.")
+                    # Force transcription of any remaining audio in the buffer
+                    final_chunk = await transcription_service.transcribe_stream(b"", force=True)
+                    if final_chunk:
+                        accumulated_transcript.append(final_chunk)
                     
-                    # Clean
-                    cleaned = await reasoning_service.clean_transcript(full_transcript)
-                    await websocket.send_json({
-                        "type": "cleaned",
-                        "data": cleaned
-                    })
+                    full_transcript = " ".join(accumulated_transcript).strip()
                     
-                    # Extract tasks
-                    tasks = await reasoning_service.extract_tasks(cleaned["sections"])
-                    await websocket.send_json({
-                        "type": "tasks",
-                        "data": tasks
-                    })
-                    
-                    # Generate summary
-                    summary = await reasoning_service.generate_summary(
-                        cleaned["sections"],
-                        tasks["tasks"]
-                    )
-                    await websocket.send_json({
-                        "type": "summary",
-                        "data": summary
-                    })
+                    # Send the final, complete transcript and stop.
+                    await websocket.send_json({"type": "final_transcript", "data": full_transcript})
+                    print(f"[WS] Sent final transcript of {len(full_transcript)} chars. Closing connection.")
+                    break # End the WebSocket session after sending the final transcript.
                     
     except WebSocketDisconnect:
-        print("WebSocket disconnected")
+        print("[WS] Client disconnected.")
     except Exception as e:
-        await websocket.send_json({
-            "type": "error",
-            "message": str(e)
-        })
+        print(f"[WS] Error: {str(e)}")
+    finally:
+        # Always reset the buffer when the connection ends.
+        transcription_service.reset_stream_buffer()
+        print("[WS] Connection closed and buffer reset.")
 
 # New coffee chat processing endpoint
 @app.post("/coffee/process")

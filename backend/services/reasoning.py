@@ -1,14 +1,11 @@
 import openai
-import anthropic
 import json
 from typing import Dict, List, Any, Optional
 
 class ReasoningService:
-    def __init__(self, openai_key: Optional[str] = None, anthropic_key: Optional[str] = None):
+    def __init__(self, openai_key: Optional[str] = None):
         self.openai_key = openai_key
-        self.anthropic_key = anthropic_key
         self.openai_client = openai.OpenAI(api_key=openai_key) if openai_key and openai_key != "your_openai_api_key_here" else None
-        self.anthropic_client = anthropic.Anthropic(api_key=anthropic_key) if anthropic_key and anthropic_key != "your_anthropic_api_key_here" else None
     
     async def clean_transcript(self, raw_transcript: str) -> Dict:
         """Clean and segment transcript using GPT-4o"""
@@ -50,7 +47,22 @@ Raw transcript:
         return json.loads(result)
     
     async def extract_tasks(self, sections: List[Dict], timezone: str = "America/New_York") -> Dict:
-        """Extract actionable tasks using Claude 3.5"""
+        """Extract actionable tasks using GPT-4o"""
+        if not self.openai_client:
+            return {
+                "tasks": [{
+                    "id": "demo-1",
+                    "action": "[DEMO] Add OPENAI_API_KEY to extract real tasks",
+                    "context": "This is a placeholder task",
+                    "due": None,
+                    "date_hint": None,
+                    "owner": None,
+                    "priority": "medium",
+                    "confidence": 0.5,
+                    "source_section": "Demo Section"
+                }]
+            }
+        
         prompt = f"""Input: cleaned transcript sections (JSON). 
 Task: From the transcript, extract all actionable items, decisions, and commitments. For each item, produce:
 - id: short unique id
@@ -63,44 +75,28 @@ Task: From the transcript, extract all actionable items, decisions, and commitme
 - confidence: float between 0.0 and 1.0 (how sure you are)
 - source_section: title of section where it came from
 
-Return a JSON array under the key "tasks".
+Return a JSON object with key "tasks" containing an array.
 
 Timezone: {timezone}
 
 Here is the input:
 {json.dumps(sections, indent=2)}"""
 
-        # Prefer Anthropic if available, else fall back to OpenAI
-        if self.anthropic_client:
-            try:
-                message = self.anthropic_client.messages.create(
-                    model="claude-3-5-sonnet-20241022",
-                    max_tokens=1500,
-                    temperature=0.0,
-                    system="You are an exacting task extraction engine. Produce only JSON that conforms to the schema. Attempt to resolve natural-language dates into ISO 8601 where possible. If no explicit date is present, set \"due\": null and \"date_hint\": \"<text hint>\". Add a \"confidence\" (0.0–1.0).",
-                    messages=[{"role": "user", "content": prompt}]
-                )
-                result = message.content[0].text
-                return json.loads(result)
-            except Exception:
-                # fall through to OpenAI fallback
-                pass
+        response = self.openai_client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "You are an exacting task extraction engine. Produce only JSON that conforms to the schema. Attempt to resolve natural-language dates into ISO 8601 where possible. If no explicit date is present, set \"due\": null and \"date_hint\": \"<text hint>\". Add a \"confidence\" (0.0–1.0). Return JSON with structure: {\"tasks\": [{id, action, context, due, date_hint, owner, priority, confidence, source_section}]}"},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.0,
+            max_tokens=1500,
+            response_format={"type": "json_object"}
+        )
         
-        if self.openai_client:
-            response = self.openai_client.chat.completions.create(
-                model="gpt-4o",
-                messages=[
-                    {"role": "system", "content": "You are an exacting task extraction engine. Return only valid JSON matching the schema with keys: tasks: [ {id, action, context, due, date_hint, owner, priority, confidence, source_section} ]. Resolve natural-language dates using the timezone provided."},
-                    {"role": "user", "content": f"Timezone: {timezone}\n\n{prompt}"}
-                ],
-                temperature=0.0,
-                max_tokens=1500
-            )
-            result = response.choices[0].message.content
-            return json.loads(result)
-        
-        # As last resort, return an empty list rather than failing
-        return {"tasks": []}
+        result = response.choices[0].message.content
+        if not result:
+            return {"tasks": []}
+        return json.loads(result)
     
     async def create_event_suggestion(self, task: Dict, timezone: str) -> Dict:
         """Create calendar event suggestion from task"""
@@ -155,41 +151,67 @@ Return only the question text, no JSON."""
         return response.choices[0].message.content.strip('"')
     
     async def generate_summary(self, sections: List[Dict], tasks: List[Dict]) -> Dict:
-        """Generate smart summary with GPT-4o that analyzes content and prompts for more information"""
+        """Generate adaptive smart summary that captures understanding, confusion, and gaps"""
         if not self.openai_client:
             return {
                 "short_summary": "[DEMO] Add OPENAI_API_KEY for summaries",
                 "detailed_summary": [],
                 "insights": [],
-                "clarifying_questions": []
+                "clarifying_questions": [],
+                "knowledge_gaps": [],
+                "strengths": []
             }
         
-        prompt = f"""You are an intelligent meeting/conversation analyzer. Analyze this transcript deeply and provide:
+        prompt = f"""You are an ADAPTIVE learning assistant analyzing this conversation. Your job is to create a summary that ADAPTS to what was actually said - both strengths AND gaps.
 
-1. **short_summary**: One compelling sentence that captures the core essence
-2. **detailed_summary**: 4-6 specific bullet points covering:
-   - Key decisions made
-   - Important tasks identified  
-   - Risks or concerns raised
-   - Next steps mentioned
-3. **insights**: 3-5 analytical observations about:
+CRITICAL: Look for expressions of confusion, uncertainty, or gaps like:
+- "I don't understand [concept]"
+- "I'm not sure about [topic]"
+- "This part is confusing"
+- "I need to learn more about [X]"
+- "What does [term] mean?"
+- Any indication of struggling with a concept
+
+Provide:
+
+1. **short_summary**: One sentence capturing the essence (both what was covered AND any struggles)
+
+2. **detailed_summary**: 4-6 bullet points including:
+   - Main topics discussed
+   - Key points made
+   - Important decisions/tasks
+   - **CRITICAL**: Any concepts the speaker struggled with or didn't understand
+
+3. **insights**: 3-5 observations about:
+   - What the speaker understands well
    - Communication patterns
-   - Underlying themes or priorities
-   - Potential gaps or missing information
-   - Strategic implications
-4. **clarifying_questions**: 3-4 probing questions that would provide valuable context:
-   - About timeline/deadlines
-   - About ownership/responsibility
-   - About scope or requirements
-   - About dependencies or blockers
+   - Areas showing mastery
+   - Underlying themes
 
-Be highly analytical - read between the lines, identify what's NOT said, spot patterns, and think strategically about what additional information would be most valuable.
+4. **knowledge_gaps**: IMPORTANT - Explicitly list any concepts/topics where the speaker expressed:
+   - Confusion or uncertainty
+   - Lack of understanding
+   - Need for clarification
+   - Gaps in knowledge
+   If NONE found, return empty array.
+
+5. **strengths**: 2-3 areas where the speaker demonstrated strong understanding
+
+6. **clarifying_questions**: 3-4 questions that would help:
+   - Address any confusion mentioned
+   - Fill knowledge gaps
+   - Clarify ambiguous points
+   - Deepen understanding
+
+BE ADAPTIVE - if they say "I don't get X", your summary should say "Struggled with understanding X" not ignore it.
 
 Return JSON: {{
   "short_summary": "...",
-  "detailed_summary": ["...", "...", "...", "..."],
-  "insights": ["...", "...", "..."],
-  "clarifying_questions": ["...", "...", "..."]
+  "detailed_summary": ["...", "..."],
+  "insights": ["...", "..."],
+  "knowledge_gaps": ["concept/topic where confusion was expressed", "..."],
+  "strengths": ["...", "..."],
+  "clarifying_questions": ["...", "..."]
 }}
 
 Transcript Sections:
@@ -201,11 +223,11 @@ Extracted Tasks:
         response = self.openai_client.chat.completions.create(
             model="gpt-4o",
             messages=[
-                {"role": "system", "content": "You are an intelligent meeting analyzer. Analyze transcripts deeply, identify patterns, gaps, and areas needing clarification. Return only valid JSON with short_summary, detailed_summary, insights, and clarifying_questions."},
+                {"role": "system", "content": "You are an adaptive learning assistant. Your summaries must CAPTURE and HIGHLIGHT any expressions of confusion, uncertainty, or knowledge gaps. Don't just summarize the 'good parts' - adapt to what was actually said, including struggles. Return only valid JSON."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.3,
-            max_tokens=800,
+            max_tokens=1000,
             response_format={"type": "json_object"}
         )
         
@@ -220,6 +242,8 @@ Extracted Tasks:
             "short_summary": summary_data.get("short_summary", ""),
             "detailed_summary": summary_data.get("detailed_summary", []),
             "insights": summary_data.get("insights", []),
+            "knowledge_gaps": summary_data.get("knowledge_gaps", []),
+            "strengths": summary_data.get("strengths", []),
             "clarifying_questions": summary_data.get("clarifying_questions", [])
         }
     

@@ -77,33 +77,51 @@ class TranscriptionService:
             # If validation fails, return original
             return transcript
     
-    async def transcribe_stream(self, audio_chunk: bytes) -> Optional[str]:
+    async def transcribe_stream(self, audio_chunk: bytes, force: bool = False) -> Optional[str]:
         """
-        Stream transcription - for real-time processing
-        In production, you'd use OpenAI Realtime API
-        For MVP, we accumulate and transcribe periodically
+        Stream transcription - for real-time processing with low latency
+        Accumulates ~2-3 seconds of audio before transcribing
         """
+        if not self.client:
+            return None
+            
         self.stream_buffer.append(audio_chunk)
         
-        # Every ~3 seconds of audio (arbitrary threshold)
-        if len(self.stream_buffer) > 30:
+        # Reduced threshold for lower latency: ~2 seconds of audio chunks
+        # Each chunk is typically ~100ms, so 20 chunks = ~2 seconds
+        should_transcribe = len(self.stream_buffer) >= 20 or force
+        
+        if should_transcribe and len(self.stream_buffer) > 0:
             combined = b''.join(self.stream_buffer)
             self.stream_buffer = []
             
+            # Minimum size check (avoid transcribing tiny chunks)
+            if len(combined) < 4000 and not force:  # ~0.5 seconds minimum
+                self.stream_buffer.append(combined)
+                return None
+            
             try:
-                # Create temp file-like object
+                # Create temp file-like object with proper format
                 audio_file = io.BytesIO(combined)
-                audio_file.name = "stream.wav"
+                audio_file.name = "stream.webm"
+                
+                print(f"[STREAM] Transcribing chunk: {len(combined)} bytes")
                 
                 transcript = self.client.audio.transcriptions.create(
                     model="whisper-1",
                     file=audio_file,
-                    response_format="text"
+                    response_format="text",
+                    language="en"  # Specify language for faster processing
                 )
                 
-                return transcript
-            except:
+                return transcript.strip() if transcript else None
+            except Exception as e:
+                print(f"[STREAM] Transcription error: {str(e)}")
                 return None
         
         return None
+    
+    def reset_stream_buffer(self):
+        """Reset the stream buffer (call when stopping recording)"""
+        self.stream_buffer = []
 
