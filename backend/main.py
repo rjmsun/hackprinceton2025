@@ -1,4 +1,4 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File, Request
+from fastapi import FastAPI, HTTPException, UploadFile, File, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, RedirectResponse
 from pydantic import BaseModel
@@ -255,55 +255,6 @@ async def get_gemini_summary(request: TranscriptRequest):
         return {"summary": summary, "status": "success"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-
-
-async def websocket_realtime(websocket: WebSocket):
-    """(Refactored) WebSocket for live transcription. Processing is now on-demand."""
-    await websocket.accept()
-    print("[WS] Client connected for live transcription.")
-    accumulated_transcript = []
-    
-    try:
-        while True:
-            data = await websocket.receive()
-            
-            if "bytes" in data:
-                transcript_chunk = await transcription_service.transcribe_stream(data["bytes"])
-                if transcript_chunk:
-                    accumulated_transcript.append(transcript_chunk)
-                    await websocket.send_json({
-                        "type": "partial_transcript",
-                        "full_transcript": " ".join(accumulated_transcript),
-                    })
-                    
-            elif "text" in data:
-                message = json.loads(data["text"])
-                if message.get("action") == "stop":
-                    print("[WS] Stop received. Finalizing transcript.")
-                    # Force transcription of any remaining audio in the buffer
-                    final_chunk = await transcription_service.transcribe_stream(b"", force=True)
-                    if final_chunk:
-                        accumulated_transcript.append(final_chunk)
-                    
-                    full_transcript = " ".join(accumulated_transcript).strip()
-                    
-                    # Send the final, complete transcript and stop.
-                    await websocket.send_json({"type": "final_transcript", "data": full_transcript})
-                    print(f"[WS] Sent final transcript of {len(full_transcript)} chars. Closing connection.")
-                    break # End the WebSocket session after sending the final transcript.
-                    
-    except WebSocketDisconnect:
-        print("[WS] Client disconnected.")
-    except Exception as e:
-        print(f"[WS] Error: {str(e)}")
-    finally:
-        # Always reset the buffer when the connection ends.
-        transcription_service.reset_stream_buffer()
-        print("[WS] Connection closed and buffer reset.")
-
-
-
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

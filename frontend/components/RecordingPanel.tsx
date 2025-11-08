@@ -1,11 +1,10 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef } from 'react'
 import { Mic, Upload, Loader2, Square } from 'lucide-react'
 import axios from 'axios'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000'
 
 export default function RecordingPanel({ 
   onTranscriptUpdate, 
@@ -16,24 +15,11 @@ export default function RecordingPanel({
 }: any) {
   const [isRecording, setIsRecording] = useState(false)
   const [transcript, setTranscript] = useState('')
-  const [liveTranscript, setLiveTranscript] = useState('') // Real-time partial transcripts
   const [isProcessing, setIsProcessing] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
-  const wsRef = useRef<WebSocket | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
-
-  // Clean up WebSocket on unmount
-  useEffect(() => {
-    return () => {
-      if (wsRef.current) {
-        wsRef.current.close()
-      }
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop())
-      }
-    }
-  }, [])
+  const chunksRef = useRef<Blob[]>([])
 
   const startRecording = async () => {
     try {
@@ -42,69 +28,37 @@ export default function RecordingPanel({
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
-          sampleRate: 16000 // Optimize for Whisper
+          sampleRate: 16000
         } 
       })
       streamRef.current = stream
 
-      // Connect to WebSocket for real-time transcription
-      const ws = new WebSocket(`${WS_URL}/ws/realtime`)
-      wsRef.current = ws
-
-      ws.onopen = () => {
-        console.log('[WS] Connected for live transcription')
-      }
-
-      ws.onmessage = (event) => {
-        const message = JSON.parse(event.data)
-        console.log('[WS] Message:', message.type)
-
-        if (message.type === 'partial_transcript') {
-          // Update live transcript as chunks come in
-          setLiveTranscript(message.full_transcript)
-          onTranscriptUpdate(message.full_transcript)
-        } else if (message.type === 'final_transcript') {
-          setTranscript(message.data)
-          setLiveTranscript('')
-          onTranscriptFinalized(message.data); // Notify parent that transcript is ready
-          setIsProcessing(false) // Stop the recording processing indicator
-          onProcessingChange(false)
-        } else if (message.type === 'error') {
-          console.error('[WS] Error:', message.message)
-          alert(`Live recording error: ${message.message}`)
-          setIsProcessing(false)
-          onProcessingChange(false)
-        }
-      }
-
-      ws.onerror = (error) => {
-        console.error('[WS] Error:', error)
-        alert('WebSocket connection failed. Check backend is running.')
-      }
-
-      ws.onclose = () => {
-        console.log('[WS] Connection closed')
-      }
-
-      // Set up MediaRecorder to send chunks via WebSocket
+      // Set up MediaRecorder to record to chunks (no WebSocket)
       const mediaRecorder = new MediaRecorder(stream, {
         mimeType: 'audio/webm;codecs=opus'
       })
       mediaRecorderRef.current = mediaRecorder
+      chunksRef.current = []
 
       mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
-          // Send audio chunk to backend for real-time transcription
-          e.data.arrayBuffer().then(buffer => {
-            ws.send(buffer)
-          })
+        if (e.data.size > 0) {
+          chunksRef.current.push(e.data)
         }
       }
 
-      // Request data every 100ms for low latency
-      mediaRecorder.start(100)
+      mediaRecorder.onstop = async () => {
+        // When recording stops, transcribe the complete audio
+        const audioBlob = new Blob(chunksRef.current, { type: 'audio/webm' })
+        await transcribeAudio(audioBlob)
+        
+        // Stop all tracks
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach(track => track.stop())
+        }
+      }
+
+      mediaRecorder.start()
       setIsRecording(true)
-      setLiveTranscript('')
       setTranscript('')
 
     } catch (error) {
@@ -117,18 +71,36 @@ export default function RecordingPanel({
     if (mediaRecorderRef.current && isRecording) {
       mediaRecorderRef.current.stop()
       setIsRecording(false)
-      
-      // Stop all tracks
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop())
-      }
+    }
+  }
 
-      // Send stop signal to backend to process final audio
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({ action: 'stop' }))
-        setIsProcessing(true)
-        onProcessingChange(true)
-      }
+  const transcribeAudio = async (audioBlob: Blob) => {
+    setIsProcessing(true)
+    onProcessingChange(true)
+
+    try {
+      const formData = new FormData()
+      formData.append('file', audioBlob, 'recording.webm')
+
+      const response = await axios.post(`${API_URL}/transcribe/file?validate=true`, formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+        timeout: 300000
+      })
+
+      const transcriptText = response.data.transcript
+      setTranscript(transcriptText)
+      onTranscriptUpdate(transcriptText)
+      onTranscriptFinalized(transcriptText)
+
+    } catch (error: any) {
+      console.error('Transcription error:', error)
+      const errorMessage = error.response?.data?.detail || error.message || 'Unknown error'
+      alert(`Transcription failed: ${errorMessage}`)
+    } finally {
+      setIsProcessing(false)
+      onProcessingChange(false)
     }
   }
 
@@ -169,10 +141,8 @@ export default function RecordingPanel({
 
       const transcriptText = response.data.transcript
       setTranscript(transcriptText)
-      setLiveTranscript('')
+      onTranscriptUpdate(transcriptText)
       onTranscriptFinalized(transcriptText) // Notify parent that transcript is ready
-
-      await processTranscript(transcriptText)
     } catch (error: any) {
       console.error('Upload error:', error)
       const errorMessage = error.response?.data?.detail || error.message || 'Unknown error'
@@ -181,28 +151,6 @@ export default function RecordingPanel({
     } finally {
       setIsProcessing(false)
       onProcessingChange(false)
-    }
-  }
-
-  const processTranscript = async (text: string) => {
-    try {
-      const response = await axios.post(`${API_URL}/process/transcript`, {
-        text: text,
-        user_id: 'demo_user',
-        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
-      })
-
-      onTasksExtracted(response.data.tasks || [])
-      // Support both new dual summary format and old single summary
-      const summary = response.data.summary_openai || response.data.summary || null
-      const summaryGemini = response.data.summary_gemini || null
-      onSummaryGenerated({ 
-        ...summary, 
-        gemini_alternative: summaryGemini 
-      })
-    } catch (error) {
-      console.error('Processing error:', error)
-      alert(`Processing failed: ${error}. Check console for details.`)
     }
   }
 
@@ -260,30 +208,20 @@ export default function RecordingPanel({
         <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
           <div className="flex items-center gap-2">
             <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
-            <span className="text-red-700 font-medium">🎙️ Recording live - transcription appears in real-time below...</span>
+            <span className="text-red-700 font-medium">🎙️ Recording... Click "Stop Recording" when done</span>
           </div>
         </div>
       )}
 
       <div className="bg-gray-50 rounded-lg p-4 min-h-[200px] max-h-[400px] overflow-y-auto">
-        <h3 className="text-sm font-semibold text-gray-600 mb-2">
-          {isRecording ? '🔴 Live Transcript' : 'Transcript'}
-        </h3>
-        {transcript || liveTranscript ? (
-          <div>
-            {liveTranscript && isRecording && (
-              <p className="text-gray-800 whitespace-pre-wrap mb-2">
-                {liveTranscript}
-                <span className="inline-block w-2 h-4 ml-1 bg-gray-800 animate-pulse"></span>
-              </p>
-            )}
-            {!isRecording && transcript && (
-              <p className="text-gray-800 whitespace-pre-wrap">{transcript}</p>
-            )}
-          </div>
+        <h3 className="text-sm font-semibold text-gray-600 mb-2">Transcript</h3>
+        {transcript ? (
+          <p className="text-gray-800 whitespace-pre-wrap">{transcript}</p>
         ) : (
           <p className="text-gray-400 italic">
-            Start recording for real-time transcription or upload an audio file...
+            {isRecording 
+              ? 'Recording... (transcript will appear after you stop recording)' 
+              : 'Start recording or upload an audio file to see the transcript here...'}
           </p>
         )}
       </div>
