@@ -93,7 +93,7 @@ async def process_transcript(request: TranscriptRequest):
         # Step 1: Clean and segment transcript (GPT-4o)
         cleaned = await reasoning_service.clean_transcript(validated_text)
         
-        # Step 2: Extract tasks (Claude 3.5)
+        # Step 2: Extract tasks (GPT-4o)
         tasks = await reasoning_service.extract_tasks(
             cleaned["sections"], 
             timezone=request.timezone

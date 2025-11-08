@@ -61,9 +61,9 @@ EVE is an AI-powered productivity assistant that helps users process and act on 
 - `frontend/components/TasksPanel.tsx`
 
 **Implementation:**
-- Two-stage process:
-  1. OpenAI GPT-4 for initial transcript cleaning and segmentation
-  2. Anthropic Claude 3.5 for deep task extraction
+- Uses OpenAI GPT-4o for:
+  1. Transcript cleaning and segmentation
+  2. Task extraction with structured JSON output
 - JSON schema for tasks includes:
   - action description
   - context
@@ -142,14 +142,13 @@ EVE is an AI-powered productivity assistant that helps users process and act on 
 
 ### Environmental Configuration
 Required API Keys:
-- `OPENAI_API_KEY` - For GPT-4 and Whisper
-- `ANTHROPIC_API_KEY` - For Claude
+- `OPENAI_API_KEY` - For GPT-4o and Whisper
 - `ELEVENLABS_API_KEY` - For voice synthesis
+- `GEMINI_API_KEY` - For alternative summaries
 - `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` - For calendar
 
 Optional:
 - `AMPLITUDE_API_KEY` - For analytics
-- `GEMINI_API_KEY` - For additional AI features
 
 ### Error Handling & Fallbacks
 - Services provide demo mode responses when API keys are missing

@@ -14,8 +14,8 @@ if [ ! -f .env ]; then
     echo ""
     echo "Required API keys:"
     echo "  - OPENAI_API_KEY (get from: https://platform.openai.com/api-keys)"
-    echo "  - ANTHROPIC_API_KEY (get from: https://console.anthropic.com/)"
     echo "  - ELEVENLABS_API_KEY (get from: https://elevenlabs.io/)"
+    echo "  - GEMINI_API_KEY (get from: https://aistudio.google.com/apikey)"
     echo ""
     echo "After adding your keys, run this script again."
     exit 1

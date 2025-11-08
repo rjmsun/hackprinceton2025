@@ -12,7 +12,7 @@ load_dotenv()
 
 if __name__ == "__main__":
     # Check for required API keys
-    required_keys = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"]
+    required_keys = ["OPENAI_API_KEY"]
     missing_keys = [key for key in required_keys if not os.getenv(key)]
     
     if missing_keys:

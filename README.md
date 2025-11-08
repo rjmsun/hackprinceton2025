@@ -18,7 +18,6 @@ EVE transforms conversations (coffee chats, lectures, meetings) into organized, 
 
 **Required:**
 - **OpenAI**: https://platform.openai.com/api-keys (for Whisper transcription + GPT-4o)
-- **Anthropic**: https://console.anthropic.com/ (for Claude 3.5 task extraction)
 - **ElevenLabs**: https://elevenlabs.io/ (for voice summaries)
 
 **Optional (but recommended):**
@@ -38,8 +37,8 @@ nano .env  # or use any text editor
 **Minimum required in `.env`:**
 ```bash
 OPENAI_API_KEY=sk-proj-your_key_here
-ANTHROPIC_API_KEY=sk-ant-your_key_here
 ELEVENLABS_API_KEY=your_key_here
+GEMINI_API_KEY=your_gemini_key_here
 ```
 
 **For Google Calendar (optional):**
@@ -124,9 +123,9 @@ You should see:
 EVE automatically:
 1. **Transcribes** audio using OpenAI Whisper
 2. **Fact-checks** transcript using GPT-4o (fixes errors, corrects technical terms)
-3. **Extracts tasks** using Claude 3.5 (with GPT-4o fallback)
+3. **Extracts tasks** using GPT-4o
 4. **Generates summaries** using GPT-4o
-5. **Cross-validates** with Gemini (if configured)
+5. **Cross-validates** with Gemini 2.5 Flash (alternative summaries)
 
 ### 3. Review Results
 
@@ -161,7 +160,7 @@ EVE automatically:
   - Fixes transcription errors
   - Corrects technical terms (e.g., "CS214" not "see 214")
 
-- 🧠 **Smart Task Extraction** (Claude 3.5 + GPT-4o fallback)
+- 🧠 **Smart Task Extraction** (GPT-4o)
   - Extracts actionable items
   - Identifies due dates and owners
   - Assigns priorities (high/medium/low)
@@ -214,7 +213,7 @@ EVE/
 │   ├── main.py          # API endpoints
 │   └── services/         # AI service integrations
 │       ├── transcription.py    # Whisper + GPT-4o fact-check
-│       ├── reasoning.py         # GPT-4o + Claude task extraction
+│       ├── reasoning.py         # GPT-4o task extraction & summaries
 │       ├── coffee_chat.py       # Tips, vibe scoring, coaching
 │       ├── gemini_service.py   # Cross-validation
 │       ├── tts.py              # ElevenLabs TTS
@@ -309,9 +308,9 @@ lsof -ti:3000 | xargs kill -9  # macOS/Linux
 - For large files, wait longer (processing may take time)
 
 **"No tasks extracted":**
-- Check Anthropic API key is set
-- If Anthropic fails, GPT-4o fallback should work
+- Check OpenAI API key is set
 - Verify transcript has actionable content
+- Ensure GPT-4o has sufficient credits
 
 **"Summary not generated":**
 - Check OpenAI API key
@@ -357,8 +356,8 @@ npm run dev
 ### What Works Now
 
 ✅ **Audio Transcription** - OpenAI Whisper with fact-checking  
-✅ **Task Extraction** - Claude 3.5 with GPT-4o fallback  
-✅ **Summary Generation** - GPT-4o summaries  
+✅ **Task Extraction** - GPT-4o  
+✅ **Summary Generation** - GPT-4o + Gemini 2.5 Flash (dual summaries)  
 ✅ **Google Calendar** - Full OAuth integration, one-click scheduling  
 ✅ **Large File Support** - Handles big audio files efficiently  
 ✅ **Voice Summaries** - ElevenLabs TTS integration  
@@ -372,7 +371,7 @@ If you don't have all API keys, EVE works in demo mode:
 - Shows placeholder messages for missing APIs
 - You can still test the flow
 - Transcription requires OpenAI key
-- Task extraction requires OpenAI or Anthropic key
+- Task extraction requires OpenAI API key
 
 ---
 
@@ -390,9 +389,8 @@ If you don't have all API keys, EVE works in demo mode:
 
 ## 🏆 Sponsor Integrations
 
-✅ **OpenAI** - Whisper (transcription) + GPT-4o (fact-checking, summaries, reasoning)  
-✅ **Anthropic** - Claude 3.5 (task extraction)  
-✅ **Google** - Calendar API (scheduling) + Gemini (validation)  
+✅ **OpenAI** - Whisper (transcription) + GPT-4o (fact-checking, summaries, task extraction)  
+✅ **Google** - Calendar API (scheduling) + Gemini 2.5 Flash (alternative summaries)  
 ✅ **ElevenLabs** - TTS (voice feedback)  
 ✅ **MLH** - Snowflake (storage) + Amplitude (analytics)  
 
@@ -410,13 +408,11 @@ If you don't have all API keys, EVE works in demo mode:
 - FastAPI
 - Python 3.9+
 - OpenAI SDK
-- Anthropic SDK
 - Google APIs
 
 **AI Services:**
 - OpenAI (Whisper, GPT-4o)
-- Anthropic (Claude 3.5)
-- Google (Gemini, Calendar)
+- Google (Gemini 2.5 Flash, Calendar)
 - ElevenLabs (TTS)
 - Snowflake (Storage)
 

@@ -30,8 +30,8 @@ Create `.env` in project root:
 
 ```bash
 OPENAI_API_KEY=sk-proj-...
-ANTHROPIC_API_KEY=sk-ant-...
 ELEVENLABS_API_KEY=...
+GEMINI_API_KEY=...
 ```
 
 ## Services
@@ -41,8 +41,7 @@ ELEVENLABS_API_KEY=...
 - Handles file uploads and streaming
 
 ### `reasoning.py` - AI Processing
-- OpenAI GPT-4o for summarization
-- Anthropic Claude 3.5 for task extraction
+- OpenAI GPT-4o for summarization and task extraction
 - Prompt engineering for structured outputs
 
 ### `tts.py` - Text to Speech
