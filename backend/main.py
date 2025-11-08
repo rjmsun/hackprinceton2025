@@ -99,8 +99,9 @@ async def root():
 async def transcribe_audio_file(file: UploadFile = File(...), validate: bool = True):
     """Upload audio file for transcription with optional fact-checking"""
     try:
-        content = await file.read()
-        transcript = await transcription_service.transcribe_file(content, file.filename)
+                # Stream-friendly: use underlying file object instead of reading all to memory
+                file.file.seek(0)
+                transcript = await transcription_service.transcribe_file_obj(file.file, file.filename)
         
         # Fact-check and enhance transcript using GPT-4o
         if validate:

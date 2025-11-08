@@ -61,7 +61,7 @@ export default function RecordingPanel({
       const formData = new FormData()
       formData.append('file', audioBlob, 'recording.webm')
 
-      const response = await axios.post(`${API_URL}/transcribe/file`, formData, {
+      const response = await axios.post(`${API_URL}/transcribe/file?validate=true`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       })
 
@@ -91,7 +91,7 @@ export default function RecordingPanel({
       const formData = new FormData()
       formData.append('file', file)
 
-      const response = await axios.post(`${API_URL}/transcribe/file`, formData)
+      const response = await axios.post(`${API_URL}/transcribe/file?validate=true`, formData)
       const transcriptText = response.data.transcript
       setTranscript(transcriptText)
       onTranscriptUpdate(transcriptText)

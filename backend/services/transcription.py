@@ -7,6 +7,29 @@ class TranscriptionService:
         self.api_key = api_key
         self.client = openai.OpenAI(api_key=api_key) if api_key and api_key != "your_openai_api_key_here" else None
         self.stream_buffer = []
+            
+            async def transcribe_file_obj(self, file_obj, filename: str) -> str:
+                """Transcribe using a file-like object to support large uploads without loading into memory."""
+                if not self.client:
+                    return "[DEMO MODE] Transcription placeholder - add OPENAI_API_KEY to .env"
+                try:
+                    # the OpenAI SDK accepts a file-like object; ensure it has a name attr
+                    try:
+                        getattr(file_obj, "name")
+                    except Exception:
+                        # best-effort assign a name for content-type inference
+                        try:
+                            file_obj.name = filename
+                        except Exception:
+                            pass
+                    transcript = self.client.audio.transcriptions.create(
+                        model="whisper-1",
+                        file=file_obj,
+                        response_format="text"
+                    )
+                    return transcript
+                except Exception as e:
+                    raise Exception(f"Transcription failed: {str(e)}")
     
     async def transcribe_file(self, audio_data: bytes, filename: str) -> str:
         """Transcribe uploaded audio file using Whisper"""

@@ -51,22 +51,7 @@ Raw transcript:
     
     async def extract_tasks(self, sections: List[Dict], timezone: str = "America/New_York") -> Dict:
         """Extract actionable tasks using Claude 3.5"""
-        if not self.anthropic_client:
-            return {
-                "tasks": [{
-                    "id": "demo-1",
-                    "action": "[DEMO] Add ANTHROPIC_API_KEY to extract real tasks",
-                    "context": "This is a placeholder task",
-                    "due": None,
-                    "date_hint": None,
-                    "owner": None,
-                    "priority": "medium",
-                    "confidence": 0.5,
-                    "source_section": "Demo Section"
-                }]
-            }
-        
-        prompt = f"""Input: cleaned transcript sections (JSON). 
+                prompt = f"""Input: cleaned transcript sections (JSON). 
 Task: From the transcript, extract all actionable items, decisions, and commitments. For each item, produce:
 - id: short unique id
 - action: concise action description
@@ -85,16 +70,37 @@ Timezone: {timezone}
 Here is the input:
 {json.dumps(sections, indent=2)}"""
 
-        message = self.anthropic_client.messages.create(
-            model="claude-3-5-sonnet-20241022",
-            max_tokens=1500,
-            temperature=0.0,
-            system="You are an exacting task extraction engine. Produce only JSON that conforms to the schema. Attempt to resolve natural-language dates into ISO 8601 where possible. If no explicit date is present, set \"due\": null and \"date_hint\": \"<text hint>\". Add a \"confidence\" (0.0–1.0).",
-            messages=[{"role": "user", "content": prompt}]
-        )
-        
-        result = message.content[0].text
-        return json.loads(result)
+                # Prefer Anthropic if available, else fall back to OpenAI
+                if self.anthropic_client:
+                    try:
+                        message = self.anthropic_client.messages.create(
+                            model="claude-3-5-sonnet-20241022",
+                            max_tokens=1500,
+                            temperature=0.0,
+                            system="You are an exacting task extraction engine. Produce only JSON that conforms to the schema. Attempt to resolve natural-language dates into ISO 8601 where possible. If no explicit date is present, set \"due\": null and \"date_hint\": \"<text hint>\". Add a \"confidence\" (0.0–1.0).",
+                            messages=[{"role": "user", "content": prompt}]
+                        )
+                        result = message.content[0].text
+                        return json.loads(result)
+                    except Exception:
+                        # fall through to OpenAI fallback
+                        pass
+                
+                if self.openai_client:
+                    response = self.openai_client.chat.completions.create(
+                        model="gpt-4o",
+                        messages=[
+                            {"role": "system", "content": "You are an exacting task extraction engine. Return only valid JSON matching the schema with keys: tasks: [ {id, action, context, due, date_hint, owner, priority, confidence, source_section} ]. Resolve natural-language dates using the timezone provided."},
+                            {"role": "user", "content": f"Timezone: {timezone}\n\n{prompt}"}
+                        ],
+                        temperature=0.0,
+                        max_tokens=1500
+                    )
+                    result = response.choices[0].message.content
+                    return json.loads(result)
+                
+                # As last resort, return an empty list rather than failing
+                return {"tasks": []}
     
     async def create_event_suggestion(self, task: Dict, timezone: str) -> Dict:
         """Create calendar event suggestion from task"""

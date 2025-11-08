@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { CheckCircle2, Circle, Calendar, User, AlertCircle } from 'lucide-react'
 import axios from 'axios'
 
@@ -9,6 +9,14 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 export default function TasksPanel({ tasks, onTasksUpdate }: any) {
   const [selectedTasks, setSelectedTasks] = useState<string[]>([])
   const [isScheduling, setIsScheduling] = useState(false)
+  const [calendarToken, setCalendarToken] = useState<string | null>(null)
+
+  useEffect(() => {
+    try {
+      const token = localStorage.getItem('google_access_token')
+      setCalendarToken(token)
+    } catch {}
+  }, [])
 
   const toggleTask = (taskId: string) => {
     setSelectedTasks(prev => 
@@ -18,28 +26,42 @@ export default function TasksPanel({ tasks, onTasksUpdate }: any) {
     )
   }
 
+  const connectCalendar = async () => {
+    try {
+      const resp = await axios.get(`${API_URL}/calendar/auth`)
+      const url = resp.data?.auth_url
+      if (url) window.location.href = url
+    } catch (e) {
+      alert('Failed to initiate Google OAuth. Check backend logs.')
+    }
+  }
+
   const scheduleSelected = async () => {
     if (selectedTasks.length === 0) {
       alert('Please select at least one task to schedule')
       return
     }
 
-    // For demo: just show alert that calendar integration needs OAuth
-    alert(
-      'Calendar Integration:\n\n' +
-      'To create real calendar events, you need to:\n' +
-      '1. Set up Google OAuth credentials\n' +
-      '2. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to .env\n' +
-      '3. Implement OAuth flow in frontend\n\n' +
-      'For now, this demo shows the extracted tasks ready to be scheduled.'
-    )
+    if (!calendarToken) {
+      const ok = confirm('Connect Google Calendar to create events?')
+      if (ok) connectCalendar()
+      return
+    }
 
-    // In production, you would:
-    // const tasksToSchedule = tasks.filter((t: any) => selectedTasks.includes(t.id))
-    // await axios.post(`${API_URL}/calendar/schedule`, {
-    //   tasks: tasksToSchedule,
-    //   access_token: 'YOUR_GOOGLE_ACCESS_TOKEN'
-    // })
+    try {
+      setIsScheduling(true)
+      const tasksToSchedule = tasks.filter((t: any) => selectedTasks.includes(t.id))
+      await axios.post(`${API_URL}/calendar/schedule`, tasksToSchedule, {
+        params: { access_token: calendarToken }
+      })
+      alert('Scheduled selected tasks!')
+      setSelectedTasks([])
+    } catch (e) {
+      console.error(e)
+      alert('Failed to schedule tasks. Check token and backend logs.')
+    } finally {
+      setIsScheduling(false)
+    }
   }
 
   const getPriorityColor = (priority: string) => {
@@ -65,6 +87,12 @@ export default function TasksPanel({ tasks, onTasksUpdate }: any) {
           </button>
         )}
       </div>
+
+      {!calendarToken && (
+        <div className="mb-4">
+          <button onClick={connectCalendar} className="btn-secondary">Connect Google Calendar</button>
+        </div>
+      )}
 
       {tasks.length === 0 ? (
         <div className="text-center py-12">
@@ -128,6 +156,31 @@ export default function TasksPanel({ tasks, onTasksUpdate }: any) {
                     </div>
                   )}
                 </div>
+                {task.due && calendarToken && (
+                  <div className="mt-3">
+                    <button
+                      onClick={async (e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        try {
+                          setIsScheduling(true)
+                          await axios.post(`${API_URL}/calendar/schedule`, [task], {
+                            params: { access_token: calendarToken }
+                          })
+                          alert('Event added to Google Calendar!')
+                        } catch (err) {
+                          console.error(err)
+                          alert('Failed to add to Google Calendar.')
+                        } finally {
+                          setIsScheduling(false)
+                        }
+                      }}
+                      className="px-3 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-md text-sm font-medium"
+                    >
+                      Add to Google Calendar
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           ))}
