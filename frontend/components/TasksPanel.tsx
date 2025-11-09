@@ -13,9 +13,12 @@ export default function TasksPanel({ tasks, onTasksUpdate }: any) {
 
   useEffect(() => {
     try {
-      const token = localStorage.getItem('google_access_token')
-      setCalendarToken(token)
-    } catch {}
+      const token = localStorage.getItem('google_access_token');
+      setCalendarToken(token);
+      // If we have a refresh token, we could implement token refresh here
+    } catch (error) {
+      console.error('Error accessing localStorage:', error);
+    }
   }, [])
 
   const toggleTask = (taskId: string) => {

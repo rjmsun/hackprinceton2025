@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { useTheme } from './layout'
 import Dashboard from '@/components/Dashboard'
 import RecordingPanel from '@/components/RecordingPanel'
 import TasksPanel from '@/components/TasksPanel'
@@ -128,26 +129,41 @@ export default function Home() {
               <img
                 src={theme === 'dark' ? '/logo-dark.svg' : '/logo.svg'}
                 alt="EVE Logo"
-                className="h-10 w-10 md:h-12 md:w-12 object-contain transition-transform duration-300 hover:scale-105 dark:drop-shadow-[0_0_0.5rem_#6366f1]"
+                className="h-10 w-10 md:h-12 md:w-12 object-contain transition-transform duration-300 hover:scale-105"
+                onError={(e) => {
+                  // Fallback if SVG doesn't exist
+                  e.currentTarget.src = '/logo.svg'
+                }}
               />
               <div>
-                <h1 className="text-2xl font-bold text-gray-800 dark:text-textdark tracking-tight">EVE</h1>
-                <p className="text-sm text-gray-600 dark:text-textmuted">Your Everyday Virtual Executive</p>
+                <h1 className="text-2xl font-bold text-gray-800 dark:text-gray-100 tracking-tight">EVE</h1>
+                <p className="text-sm text-gray-600 dark:text-gray-400">Your Everyday Virtual Executive</p>
               </div>
             </div>
 
-            {/* Right side: Integrations */}
-            <div className="hidden md:flex gap-2 flex-wrap justify-end">
-              {['Whisper', 'GPT-4o', 'Gemini 1.5', 'Calendar', 'ElevenLabs'].map(
-                (tech) => (
-                  <span
-                    key={tech}
-                    className="px-3 py-1 bg-white/70 dark:bg-gray-700/50 rounded-full text-xs text-gray-700 dark:text-gray-200 shadow-sm"
-                  >
-                    {tech}
-                  </span>
-                ),
-              )}
+            {/* Right side: Integrations + Theme Toggle */}
+            <div className="flex items-center gap-3">
+              <div className="hidden md:flex gap-2 flex-wrap justify-end">
+                {['🎙️ Whisper', '🧠 GPT-4o', '🤖 Gemini 2.5', '📅 Calendar', '🗣️ ElevenLabs'].map(
+                  (tech) => (
+                    <span
+                      key={tech}
+                      className="px-3 py-1 bg-white/70 dark:bg-gray-700/50 rounded-full text-xs text-gray-700 dark:text-gray-200 shadow-sm"
+                    >
+                      {tech}
+                    </span>
+                  ),
+                )}
+              </div>
+              
+              {/* Theme Toggle Button */}
+              <button
+                onClick={toggleTheme}
+                className="px-4 py-2 bg-gray-200 dark:bg-gray-700 rounded-lg shadow-sm text-gray-800 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors text-sm font-medium"
+                title={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+              >
+                {theme === 'dark' ? '☀️ Light Mode' : '🌙 Dark Mode'}
+              </button>
             </div>
           </div>
         </header>
