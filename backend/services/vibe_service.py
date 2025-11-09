@@ -38,28 +38,60 @@ class VibeService:
             self.client = None
             self.use_bearer_token = False
     
-    async def analyze_vibe(self, transcript: str, context: str) -> Dict[str, Any]:
+    async def analyze_vibe(self, transcript: str, context: str = "general") -> Dict[str, Any]:
         if not self.client and not self.use_bearer_token:
             return {"vibe": "Not configured", "evidence": ["AWS Bedrock credentials not found in .env"]}
-            
-        if context not in ['interview', 'coffee_chat']:
-            return {} # Only run for interpersonal contexts
 
         # Use a fast, capable model available on Bedrock, like Claude 3 Haiku
         model_id = "anthropic.claude-3-haiku-20240307-v1:0"
         
-        prompt = f"""
-        You are an expert in social dynamics. Analyze this transcript.
-        Focus *only* on "Speaker A" (the interviewer/professional).
-        What is their "vibe" towards "Speaker B"?
-        Categories: 'Engaged', 'Neutral', 'Disinterested'.
-        Provide 2-3 quotes as 'evidence'.
+        # Enhanced emotional analysis prompt
+        if context in ['interview', 'coffee_chat']:
+            prompt = f"""
+            You are an expert in social dynamics and emotional intelligence. Analyze this transcript deeply.
+            
+            Focus on emotional cues, body language mentions, tone indicators, and interpersonal dynamics.
+            
+            Analyze:
+            1. Overall emotional vibe/sentiment (Happy, Sad, Neutral, Anxious, Confident, Excited, etc.)
+            2. Does the other person seem interested in you? (Engaged, Neutral, Disinterested)
+            3. Emotional shifts throughout the conversation
+            4. Key emotional moments with evidence
+            
+            Transcript:
+            {transcript}
+            
+            Return ONLY a valid JSON object:
+            {{
+                "vibe": "primary emotion (Happy/Sad/Neutral/Anxious/Confident/Excited)",
+                "interest_level": "Engaged/Neutral/Disinterested",
+                "confidence": 0.0-1.0,
+                "emotional_moments": ["moment 1", "moment 2"],
+                "evidence": ["quote 1", "quote 2", "quote 3"],
+                "interpretation": "brief explanation of what these emotions/signals mean"
+            }}
+            """
+        else:
+            # General video analysis - focus on visible emotions
+            prompt = f"""
+            You are analyzing emotional content and vibe from a video transcript.
+            
+            Analyze the overall emotional tone and atmosphere:
+            1. What emotions are expressed? (Happy, Sad, Frustrated, Excited, Calm, etc.)
+            2. What's the overall vibe/mood?
+            3. Any emotional shifts or notable moments?
         
         Transcript:
         {transcript}
         
         Return ONLY a valid JSON object:
-        {{"vibe": "...", "evidence": ["..."]}}
+            {{
+                "vibe": "primary emotion/mood",
+                "confidence": 0.0-1.0,
+                "emotional_moments": ["moment 1", "moment 2"],
+                "evidence": ["quote or observation 1", "quote 2"],
+                "interpretation": "what this emotional content suggests"
+            }}
         """
 
         # Construct the Bedrock request body for Claude

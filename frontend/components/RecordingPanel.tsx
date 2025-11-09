@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { Mic, Upload, Loader2, Square } from 'lucide-react'
 import axios from 'axios'
 
@@ -17,62 +17,94 @@ export default function RecordingPanel({
   const [isRecording, setIsRecording] = useState(false)
   const [transcript, setTranscript] = useState('')
   const [isProcessing, setIsProcessing] = useState(false)
+  const [cameraError, setCameraError] = useState<string | null>(null)
+  const [stream, setStream] = useState<MediaStream | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
-  const streamRef = useRef<MediaStream | null>(null)
   const chunksRef = useRef<Blob[]>([])
+  const videoPreviewRef = useRef<HTMLVideoElement>(null)
+
+  // This effect reliably attaches the stream to the video element
+  useEffect(() => {
+    if (videoPreviewRef.current && stream) {
+      console.log('✅ Stream ready, attaching to video element.')
+      videoPreviewRef.current.srcObject = stream
+      videoPreviewRef.current.play().catch(e => {
+        console.error('❌ Video play failed:', e)
+        setCameraError('Could not start video preview.')
+      })
+    } else {
+      console.log('🧹 Stream cleared, cleaning up video element.')
+      if (videoPreviewRef.current) {
+        videoPreviewRef.current.srcObject = null
+      }
+    }
+  }, [stream])
 
   const startRecording = async () => {
     try {
-      // Get microphone access
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          sampleRate: 16000
-        } 
-      })
-      streamRef.current = stream
+      setCameraError(null)
+      const constraints = mediaType === 'video' 
+        ? { 
+            audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 16000 },
+            video: { facingMode: 'user', width: 1280, height: 720 }
+          }
+        : { 
+            audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 16000 } 
+          }
+      
+      const newStream = await navigator.mediaDevices.getUserMedia(constraints)
+      setStream(newStream)
+      setIsRecording(true)
 
-      // Set up MediaRecorder to record to chunks (no WebSocket)
-      const mediaRecorder = new MediaRecorder(stream, {
-        mimeType: 'audio/webm;codecs=opus'
-      })
+      const mimeType = mediaType === 'video' ? 'video/webm;codecs=vp8,opus' : 'audio/webm;codecs=opus'
+      const mediaRecorder = new MediaRecorder(newStream, { mimeType })
       mediaRecorderRef.current = mediaRecorder
       chunksRef.current = []
 
       mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) {
-          chunksRef.current.push(e.data)
-        }
+        if (e.data.size > 0) chunksRef.current.push(e.data)
       }
 
       mediaRecorder.onstop = async () => {
-        // When recording stops, transcribe the complete audio
-        const audioBlob = new Blob(chunksRef.current, { type: 'audio/webm' })
-        await transcribeAudio(audioBlob)
-        
-        // Stop all tracks
-        if (streamRef.current) {
-          streamRef.current.getTracks().forEach(track => track.stop())
+        const blob = new Blob(chunksRef.current, { type: mimeType })
+        if (mediaType === 'video') {
+          await transcribeVideo(blob)
+        } else {
+          await transcribeAudio(blob)
         }
       }
 
       mediaRecorder.start()
-      setIsRecording(true)
       setTranscript('')
 
-    } catch (error) {
-      console.error('Error starting recording:', error)
-      alert('Could not access microphone. Please check permissions.')
+    } catch (error: any) {
+      console.error('❌ Error starting recording:', error)
+      let errorMessage = `Could not access ${mediaType === 'video' ? 'camera/microphone' : 'microphone'}.`
+      
+      if (error.name === 'NotAllowedError') {
+        errorMessage = '🚫 Permission denied. Please allow camera/microphone access in your browser.'
+        setCameraError('Permission denied')
+      } else if (error.name === 'NotFoundError') {
+        errorMessage = '📹 No camera/microphone found. Please check your device.'
+        setCameraError('No camera found')
+      } else {
+        errorMessage += ` Error: ${error.message}`
+        setCameraError('An unknown error occurred')
+      }
+      alert(errorMessage)
     }
   }
 
   const stopRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
+    if (mediaRecorderRef.current) {
       mediaRecorderRef.current.stop()
-      setIsRecording(false)
     }
+    if (stream) {
+      stream.getTracks().forEach(track => track.stop())
+    }
+    setIsRecording(false)
+    setStream(null)
   }
 
   const transcribeAudio = async (audioBlob: Blob) => {
@@ -99,6 +131,36 @@ export default function RecordingPanel({
       console.error('Transcription error:', error)
       const errorMessage = error.response?.data?.detail || error.message || 'Unknown error'
       alert(`Transcription failed: ${errorMessage}`)
+    } finally {
+      setIsProcessing(false)
+      onProcessingChange(false)
+    }
+  }
+
+  const transcribeVideo = async (videoBlob: Blob) => {
+    setIsProcessing(true)
+    onProcessingChange(true)
+
+    try {
+      const formData = new FormData()
+      formData.append('file', videoBlob, 'recording.webm')
+
+      const response = await axios.post(`${API_URL}/transcribe/file?validate=true&analyze_video=true&vision_mode=detailed`, formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+        timeout: 600000 // 10 minute timeout for video
+      })
+
+      const transcriptText = response.data.transcript
+      setTranscript(transcriptText)
+      onTranscriptUpdate(transcriptText)
+      onTranscriptFinalized(transcriptText, response.data)
+
+    } catch (error: any) {
+      console.error('Video transcription error:', error)
+      const errorMessage = error.response?.data?.detail || error.message || 'Unknown error'
+      alert(`Video processing failed: ${errorMessage}`)
     } finally {
       setIsProcessing(false)
       onProcessingChange(false)
@@ -174,22 +236,14 @@ export default function RecordingPanel({
       <div className="flex gap-4 mb-6">
               <button
                 onClick={isRecording ? stopRecording : startRecording}
-                disabled={isProcessing || mediaType === 'video'}
+                disabled={isProcessing}
                 className={`flex-1 flex items-center justify-center gap-2 py-4 rounded-lg font-semibold transition-all ${
-                  mediaType === 'video'
-                    ? 'bg-gray-400 cursor-not-allowed text-white'
-                    : isRecording 
+                  isRecording 
                       ? 'bg-red-500 hover:bg-red-600 text-white' 
                       : 'bg-indigo-600 hover:bg-indigo-700 text-white'
                 } disabled:opacity-50 disabled:cursor-not-allowed`}
-                title={mediaType === 'video' ? 'Video recording coming soon - use upload instead' : ''}
               >
-                {mediaType === 'video' ? (
-                  <>
-                    <Mic size={20} />
-                    Video Recording (Coming Soon)
-                  </>
-                ) : isRecording ? (
+                {isRecording ? (
                   <>
                     <Square size={20} fill="white" />
                     Stop Recording
@@ -197,7 +251,7 @@ export default function RecordingPanel({
                 ) : (
                   <>
                     <Mic size={20} />
-                    Start Recording
+                    {mediaType === 'video' ? 'Start Video Recording' : 'Start Recording'}
                   </>
                 )}
         </button>
@@ -229,11 +283,39 @@ export default function RecordingPanel({
       )}
 
       {isRecording && (
-        <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
-          <div className="flex items-center gap-2">
+        <div className="mb-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+          <div className="flex items-center gap-2 mb-3">
             <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
-            <span className="text-red-700 font-medium">🎙️ Recording... Click "Stop Recording" when done</span>
+            <span className="text-red-700 dark:text-red-400 font-medium">
+              {mediaType === 'video' ? '📹 Recording video...' : '🎙️ Recording...'} Click "Stop Recording" when done
+            </span>
           </div>
+          {mediaType === 'video' && (
+            <div className="relative">
+              <video 
+                ref={videoPreviewRef}
+                className="mt-2 w-full h-64 md:h-80 bg-black object-cover rounded-lg border-4 border-red-500 shadow-2xl"
+                autoPlay
+                playsInline
+                muted
+                style={{ objectFit: 'cover' }}
+              />
+              <div className="absolute top-4 right-4 bg-red-500 text-white px-3 py-1 rounded-full text-sm font-bold flex items-center gap-2">
+                <div className="w-2 h-2 bg-white rounded-full animate-pulse"></div>
+                REC
+              </div>
+              {cameraError && (
+                <div className="absolute inset-0 bg-black/80 flex items-center justify-center text-white text-center p-4 rounded-lg">
+                  <div>
+                    <div className="text-2xl mb-2">📹</div>
+                    <div className="font-semibold mb-1">Camera Issue</div>
+                    <div className="text-sm">{cameraError}</div>
+                    <div className="text-xs mt-2 opacity-75">Check browser permissions</div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -244,12 +326,13 @@ export default function RecordingPanel({
         ) : (
           <p className="text-gray-400 italic">
             {isRecording 
-              ? 'Recording... (transcript will appear after you stop recording)' 
-              : 'Start recording or upload an audio file to see the transcript here...'}
+              ? `Recording ${mediaType}... (transcript will appear after you stop recording)` 
+              : `Start recording or upload ${mediaType === 'video' ? 'a video' : 'an audio'} file to see the transcript here...`}
           </p>
         )}
       </div>
     </div>
   )
 }
+
 

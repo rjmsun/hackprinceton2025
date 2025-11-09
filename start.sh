@@ -61,11 +61,30 @@ BACKEND_PID=$!
 cd ..
 sleep 3 # Give backend a moment to start
 
-# 4. Health check for backend
+# 4. Check for ffmpeg (required for video analysis)
 echo ""
+echo "🎥 Checking for ffmpeg (required for video analysis)..."
+if command -v ffmpeg &> /dev/null; then
+  echo "✅ ffmpeg is installed (video analysis will work!)"
+else
+  echo "⚠️  ffmpeg NOT found - video analysis will NOT work"
+  echo "   To enable video analysis, install ffmpeg:"
+  echo "   - macOS: brew install ffmpeg"
+  echo "   - Ubuntu/Debian: sudo apt install ffmpeg"
+  echo "   - Windows: Download from https://ffmpeg.org"
+  echo ""
+  echo "   Audio-only features will still work!"
+fi
+echo ""
+
+# 5. Health check for backend
 echo "🩺 Performing health check on backend..."
-if curl -s "http://localhost:8000/health" | grep -q '"status":"healthy"'; then
+HEALTH_RESPONSE=$(curl -s "http://localhost:8000/health")
+if echo "$HEALTH_RESPONSE" | grep -q '"status":"healthy"'; then
   echo "✅ Backend is healthy and running!"
+  echo ""
+  echo "📊 Backend Service Status:"
+  echo "$HEALTH_RESPONSE" | python3 -m json.tool 2>/dev/null || echo "$HEALTH_RESPONSE"
 else
   echo "❌ Backend failed to start. Please check the logs."
   kill $BACKEND_PID
@@ -74,7 +93,7 @@ fi
 echo ""
 
 
-# 5. Set up and start Frontend
+# 6. Set up and start Frontend
 echo "🎨 Setting up Node.js frontend..."
 cd frontend
 

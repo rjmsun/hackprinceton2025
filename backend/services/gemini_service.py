@@ -100,48 +100,74 @@ Transcript:
             }
     
     async def generate_summary_gemini(self, transcript: str) -> Dict:
-        """Generate adaptive summary using Gemini that scales with transcript length"""
+        """Generate comprehensive summary using Gemini with same structure as OpenAI"""
         if not self.client:
             return {
                 "short_summary": "[DEMO] Add GEMINI_API_KEY for Gemini summaries",
-                "detailed_summary": []
+                "detailed_summary": [],
+                "insights": [],
+                "clarifying_questions": [],
+                "knowledge_gaps": [],
+                "strengths": []
             }
         
-        # Adaptive sizing based on transcript length
+        # Adaptive sizing based on transcript length (same as OpenAI)
         word_count = len(transcript.split())
         if word_count < 300:
-            bullet_count = "2-4"
-            detail_level = "concise"
+            summary_bullets = "2-3"
+            insights_count = "2-3"
+            questions_count = "2-3"
         elif word_count < 800:
-            bullet_count = "4-6"
-            detail_level = "standard"
+            summary_bullets = "4-6"
+            insights_count = "3-4"
+            questions_count = "3-4"
         else:
-            bullet_count = "6-10"
-            detail_level = "comprehensive"
+            summary_bullets = "6-10"
+            insights_count = "4-6"
+            questions_count = "4-6"
         
-        prompt = f"""Create a {detail_level} summary for this {word_count}-word transcript.
+        prompt = f"""Create a comprehensive summary for this {word_count}-word transcript.
 
-Format:
-1. short_summary: 1-2 sentences capturing key themes
-2. detailed_summary: {bullet_count} bullet points covering main topics, decisions, and insights
+Analyze for:
+- Understanding vs confusion
+- Strengths vs knowledge gaps  
+- Main topics and decisions
+- Communication patterns
 
-Return clean JSON: {{"short_summary": "...", "detailed_summary": ["...", "..."]}}
+Return JSON with EXACT structure:
+{{
+  "short_summary": "1-2 sentences capturing essence and struggles",
+  "detailed_summary": ["{summary_bullets} bullet points covering topics, decisions, tasks, confusion"],
+  "insights": ["{insights_count} observations about understanding and communication"],
+  "clarifying_questions": ["{questions_count} questions to improve understanding"],
+  "knowledge_gaps": ["areas where knowledge is missing or unclear"],
+  "strengths": ["demonstrated competencies and positive aspects"]
+}}
 
 Transcript: {transcript}"""
 
         try:
             response_text = self.generate_content(prompt)
             parsed = self._parse_json_best_effort(response_text)
-            # Normalize shape
+            
+            # Ensure all required fields exist with proper structure
             return {
                 "short_summary": parsed.get("short_summary", (response_text or "")[:200]),
-                "detailed_summary": parsed.get("detailed_summary", [response_text])
+                "detailed_summary": parsed.get("detailed_summary", [response_text] if response_text else []),
+                "insights": parsed.get("insights", []),
+                "clarifying_questions": parsed.get("clarifying_questions", []),
+                "knowledge_gaps": parsed.get("knowledge_gaps", []),
+                "strengths": parsed.get("strengths", [])
             }
         except Exception as e:
-            # Final fallback – return text as-is without throwing
+            # Comprehensive fallback with all fields
             text = str(e)
             return {
                 "short_summary": text[:200],
-                "detailed_summary": [text]
+                "detailed_summary": [text],
+                "insights": ["Error generating insights with Gemini"],
+                "clarifying_questions": [],
+                "knowledge_gaps": ["Unable to analyze knowledge gaps"],
+                "strengths": []
             }
 

@@ -227,7 +227,7 @@ class VideoAnalysisAggregator:
         # Aggregate emotions (if present)
         emotions_timeline = []
         for frame in frame_results:
-            if "emotions" in frame:
+            if "emotions" in frame and "timestamp" in frame:
                 emotions_timeline.append({
                     "timestamp": frame["timestamp"],
                     "emotions": frame["emotions"],
@@ -237,7 +237,7 @@ class VideoAnalysisAggregator:
         # Detect scene changes (look for significant content changes)
         scene_changes = []
         for i, frame in enumerate(frame_results):
-            if "scene_change" in frame and frame["scene_change"]:
+            if "scene_change" in frame and frame["scene_change"] and "timestamp" in frame:
                 scene_changes.append({
                     "timestamp": frame["timestamp"],
                     "description": frame.get("description", "Scene change detected"),
@@ -248,6 +248,8 @@ class VideoAnalysisAggregator:
         slide_changes = []
         prev_text = ""
         for frame in frame_results:
+            if "timestamp" not in frame:
+                continue
             curr_text = frame.get("ocr_text", "")
             # Significant change = >50% different
             if curr_text and len(curr_text) > 20:
@@ -263,6 +265,8 @@ class VideoAnalysisAggregator:
         # Simple key scenes - just use every frame as potentially key
         key_scenes = []
         for i, frame in enumerate(frame_results[:5]):  # Max 5 scenes
+            if "timestamp" not in frame:
+                continue
             key_scenes.append({
                 "timestamp": frame["timestamp"],
                 "description": f"Scene {i+1}: {frame.get('scene_type', 'unknown')}",

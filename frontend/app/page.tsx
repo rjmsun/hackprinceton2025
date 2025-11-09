@@ -28,8 +28,59 @@ export default function Home() {
   const [showAIPractice, setShowAIPractice] = useState(false)
   const [videoAnalysis, setVideoAnalysis] = useState<any>(null)
   const [isVideo, setIsVideo] = useState(false)
+  const [previousAnalyses, setPreviousAnalyses] = useState<any[]>([])
+  const [showPrevious, setShowPrevious] = useState(false)
 
   const { theme, toggleTheme } = useTheme()
+
+  const deleteAnalysis = (analysisId: number) => {
+    setPreviousAnalyses(prev => prev.filter(analysis => analysis.id !== analysisId))
+  }
+
+  const loadAnalysis = (analysis: any) => {
+    setTranscript(analysis.transcript)
+    setTasks(analysis.tasks)
+    setSummary(analysis.summary)
+    setCoachingInsights(analysis.coachingInsights)
+    setVibeAnalysis(analysis.vibeAnalysis)
+    setVideoAnalysis(analysis.videoAnalysis)
+    setIsVideo(analysis.isVideo)
+    setContext(analysis.context)
+    setMediaType(analysis.mediaType)
+    setIsTranscriptReady(!!analysis.transcript)
+    setShowPrevious(false) // Close drawer after loading
+  }
+
+  const startNewAnalysis = () => {
+    // Save current analysis to previous analyses
+    if (transcript || summary || videoAnalysis) {
+      const currentAnalysis = {
+        id: Date.now(),
+        timestamp: new Date().toLocaleString(),
+        transcript,
+        summary,
+        tasks,
+        coachingInsights,
+        vibeAnalysis,
+        videoAnalysis,
+        isVideo,
+        context,
+        mediaType
+      }
+      setPreviousAnalyses([currentAnalysis, ...previousAnalyses])
+    }
+
+    // Reset all state
+    setTranscript('')
+    setTasks([])
+    setSummary(null)
+    setCoachingInsights(null)
+    setVibeAnalysis(null)
+    setVideoAnalysis(null)
+    setIsVideo(false)
+    setIsTranscriptReady(false)
+    setShowAIPractice(false)
+  }
 
   const normalizeGemini = (raw: any) => {
     if (!raw) return null
@@ -136,25 +187,32 @@ export default function Home() {
                 }}
               />
               <div>
-                <h1 className="text-2xl font-bold text-gray-800 dark:text-gray-100 tracking-tight">EVE</h1>
+                <h1 className="text-2xl font-bold text-gray-800 dark:text-gray-100 tracking-tight">Eve</h1>
                 <p className="text-sm text-gray-600 dark:text-gray-400">Your Everyday Virtual Executive</p>
               </div>
             </div>
 
-            {/* Right side: Integrations + Theme Toggle */}
+            {/* Right side: Start New + Theme Toggle */}
             <div className="flex items-center gap-3">
-              <div className="hidden md:flex gap-2 flex-wrap justify-end">
-                {['🎙️ Whisper', '🧠 GPT-4o', '🤖 Gemini 2.5', '📅 Calendar', '🗣️ ElevenLabs'].map(
-                  (tech) => (
-                    <span
-                      key={tech}
-                      className="px-3 py-1 bg-white/70 dark:bg-gray-700/50 rounded-full text-xs text-gray-700 dark:text-gray-200 shadow-sm"
-                    >
-                      {tech}
-                    </span>
-                  ),
-                )}
-              </div>
+              {(transcript || summary) && (
+                <button
+                  onClick={startNewAnalysis}
+                  className="px-4 py-2 bg-green-600 hover:bg-green-700 dark:bg-green-700 dark:hover:bg-green-600 text-white rounded-lg shadow-sm transition-colors text-sm font-medium"
+                  title="Start a new analysis"
+                >
+                  ✨ New Analysis
+                </button>
+              )}
+              
+              {previousAnalyses.length > 0 && (
+                <button
+                  onClick={() => setShowPrevious(!showPrevious)}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 dark:bg-indigo-700 dark:hover:bg-indigo-600 text-white rounded-lg shadow-sm transition-colors text-sm font-medium"
+                  title="View previous analyses"
+                >
+                  📂 History ({previousAnalyses.length})
+                </button>
+              )}
               
               {/* Theme Toggle Button */}
               <button
@@ -168,8 +226,58 @@ export default function Home() {
           </div>
         </header>
 
+        {/* Previous Analyses Drawer */}
+        {showPrevious && previousAnalyses.length > 0 && (
+          <div className="max-w-7xl mx-auto mt-4 mb-8 bg-white dark:bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xl font-bold text-gray-800 dark:text-gray-100">Analysis History</h3>
+              <button
+                onClick={() => setShowPrevious(false)}
+                className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 p-2 rounded-full"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 max-h-[50vh] overflow-y-auto pr-2">
+              {previousAnalyses.map((analysis) => (
+                <div
+                  key={analysis.id}
+                  className="p-4 bg-gray-50 dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-600 flex flex-col justify-between hover:shadow-md transition-shadow"
+                >
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-sm font-semibold text-gray-800 dark:text-gray-100">
+                        {analysis.mediaType === 'video' ? '📹' : '🎤'} {analysis.context.replace('_', ' ')}
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-gray-500 dark:text-gray-400">{analysis.timestamp.split(',')[0]}</span>
+                        <button
+                          onClick={() => deleteAnalysis(analysis.id)}
+                          className="text-red-500 hover:text-red-700 p-1 rounded transition-colors"
+                          title="Delete this analysis"
+                        >
+                          🗑️
+                        </button>
+                      </div>
+                    </div>
+                    <p className="text-sm text-gray-600 dark:text-gray-300 line-clamp-3 mb-3">
+                      {analysis.transcript?.substring(0, 150) || "No transcript available."}...
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => loadAnalysis(analysis)}
+                    className="w-full mt-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 dark:bg-indigo-700 dark:hover:bg-indigo-600 text-white rounded-lg shadow-sm text-sm font-semibold transition-colors"
+                  >
+                    Load Analysis
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Mode Selection - Top Priority */}
-        <div className="max-w-4xl mx-auto my-8 bg-white dark:bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700">
+        <div className="max-w-7xl mx-auto my-8 bg-white dark:bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700">
           <h2 className="text-xl font-bold text-gray-800 dark:text-gray-100 mb-4 text-center">
             Choose Your Mode
           </h2>
@@ -218,7 +326,7 @@ export default function Home() {
         </div>
 
         {/* Panels */}
-        <div className="max-w-4xl mx-auto">
+        <div className="max-w-7xl mx-auto">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
             <div className="card bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 shadow-md transition-all">
               <RecordingPanel
@@ -331,6 +439,13 @@ export default function Home() {
             <Dashboard tasksCount={tasks.length} transcript={transcript} />
           </div>
         </div>
+
+        {/* Footer */}
+        <footer className="mt-12 py-6 text-center border-t border-gray-200 dark:border-gray-700">
+          <p className="text-gray-600 dark:text-gray-400 text-sm">
+            Made with ❤️ for HackPrinceton 2025
+          </p>
+        </footer>
       </div>
     </main>
   )

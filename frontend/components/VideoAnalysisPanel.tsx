@@ -40,7 +40,7 @@ export default function VideoAnalysisPanel({ videoAnalysis, isProcessing }: Vide
       <div className="flex items-center gap-3 mb-6">
         <Video className="text-purple-600" size={32} />
         <div>
-          <h2 className="text-2xl font-bold text-gray-800">📹 Video Analysis</h2>
+          <h2 className="text-2xl font-bold text-gray-800">Video Analysis</h2>
           <p className="text-sm text-gray-600">AI-powered visual insights</p>
         </div>
       </div>
@@ -233,23 +233,124 @@ export default function VideoAnalysisPanel({ videoAnalysis, isProcessing }: Vide
         </div>
       )}
 
+      {/* Amazon Bedrock Vibe Analysis - ALWAYS show for video analysis */}
+      <div className="mb-6">
+        <button
+          onClick={() => toggleSection('bedrock')}
+          className="w-full flex items-center justify-between p-4 bg-white rounded-lg shadow-sm hover:shadow-md transition-all"
+        >
+          <div className="flex items-center gap-3">
+            <TrendingUp className="text-orange-600" size={24} />
+            <div className="text-left">
+              <h3 className="font-bold text-gray-800">Amazon Bedrock Emotional Analysis</h3>
+              <p className="text-sm text-gray-600">Deep vibe check powered by AWS Claude</p>
+            </div>
+          </div>
+          {expandedSection === 'bedrock' ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+        </button>
+        
+        {expandedSection === 'bedrock' && (
+          <div className="mt-3 p-4 bg-white rounded-lg border border-gray-200">
+            {videoAnalysis.bedrock_vibe_analysis ? (
+              <>
+                <div className="mb-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-lg font-bold text-gray-800">
+                      Overall Vibe: <span className="text-orange-600">{videoAnalysis.bedrock_vibe_analysis.vibe}</span>
+                    </span>
+                    {videoAnalysis.bedrock_vibe_analysis.confidence && (
+                      <span className="text-sm text-gray-600">
+                        Confidence: {(videoAnalysis.bedrock_vibe_analysis.confidence * 100).toFixed(0)}%
+                      </span>
+                    )}
+                  </div>
+                  {videoAnalysis.bedrock_vibe_analysis.interest_level && (
+                    <div className="text-sm text-gray-700 mb-2">
+                      <strong>Interest Level:</strong> {videoAnalysis.bedrock_vibe_analysis.interest_level}
+                    </div>
+                  )}
+                  {videoAnalysis.bedrock_vibe_analysis.interpretation && (
+                    <p className="text-gray-700 italic mb-3">"{videoAnalysis.bedrock_vibe_analysis.interpretation}"</p>
+                  )}
+                  {videoAnalysis.bedrock_vibe_analysis.error_type && (
+                    <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-3">
+                      <div className="flex items-center gap-2 text-yellow-800 mb-1">
+                        <span>⚠️</span>
+                        <span className="font-semibold">Setup Required</span>
+                      </div>
+                      <p className="text-sm text-yellow-700">{videoAnalysis.bedrock_vibe_analysis.note}</p>
+                    </div>
+                  )}
+                </div>
+                
+                {videoAnalysis.bedrock_vibe_analysis.emotional_moments && videoAnalysis.bedrock_vibe_analysis.emotional_moments.length > 0 && (
+                  <div className="mb-3">
+                    <h4 className="font-semibold text-gray-800 mb-2">Key Emotional Moments:</h4>
+                    <ul className="space-y-1 text-sm">
+                      {videoAnalysis.bedrock_vibe_analysis.emotional_moments.map((moment: string, i: number) => (
+                        <li key={i} className="text-gray-700">• {moment}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                
+                {videoAnalysis.bedrock_vibe_analysis.evidence && videoAnalysis.bedrock_vibe_analysis.evidence.length > 0 && (
+                  <div>
+                    <h4 className="font-semibold text-gray-800 mb-2">Evidence:</h4>
+                    <ul className="space-y-2 text-sm">
+                      {videoAnalysis.bedrock_vibe_analysis.evidence.map((quote: string, i: number) => (
+                        <li key={i} className="bg-gray-50 p-2 rounded italic text-gray-700">"{quote}"</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                
+                <div className="mt-3 text-xs text-gray-500 flex items-center gap-1">
+                  <span>🔧</span> Powered by Amazon Bedrock (Claude 3 Haiku)
+                </div>
+              </>
+            ) : (
+              <div className="text-center py-8">
+                <div className="text-gray-400 text-6xl mb-4">🎭</div>
+                <h4 className="font-semibold text-gray-700 mb-2">Amazon Bedrock Analysis</h4>
+                <p className="text-sm text-gray-600 mb-4">
+                  Emotional vibe analysis is processing or not configured.
+                </p>
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                  <p className="text-xs text-blue-700">
+                    This feature provides deep emotional insights about video content using AWS Claude AI.
+                    Configure AWS Bedrock credentials in your .env file to enable.
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+
       {/* Insights */}
       <div className="bg-blue-600 text-white p-4 rounded-lg">
         <h4 className="font-semibold mb-2 flex items-center gap-2">
           <span>💡</span> Video Insights
         </h4>
         <ul className="space-y-1 text-sm">
+          <li>🎭 Amazon Bedrock emotional analysis - {
+            videoAnalysis.bedrock_vibe_analysis && !videoAnalysis.bedrock_vibe_analysis.error_type 
+              ? `${videoAnalysis.bedrock_vibe_analysis.vibe} detected`
+              : 'available above (setup may be needed)'
+          }</li>
+          {videoAnalysis.key_scenes && videoAnalysis.key_scenes.length > 0 && (
+            <li>✓ {videoAnalysis.key_scenes.length} key moments identified with GPT-4o Vision</li>
+          )}
           {videoAnalysis.has_slides && (
             <li>✓ Presentation detected - {videoAnalysis.slide_changes?.length} slides with OCR</li>
           )}
           {videoAnalysis.has_faces && (
             <li>✓ People visible - emotion tracking enabled</li>
           )}
-          {videoAnalysis.key_scenes && videoAnalysis.key_scenes.length > 0 && (
-            <li>✓ {videoAnalysis.key_scenes.length} key moments identified</li>
-          )}
-          {!videoAnalysis.has_slides && !videoAnalysis.has_faces && (
-            <li>ℹ️ Video analyzed - see key scenes above</li>
+          {!videoAnalysis.has_slides && !videoAnalysis.has_faces && !videoAnalysis.key_scenes && (
+            <li>ℹ️ Video analyzed - check sections above for insights</li>
           )}
         </ul>
       </div>

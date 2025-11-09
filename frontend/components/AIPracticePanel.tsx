@@ -32,6 +32,8 @@ export default function AIPracticePanel({
   const [isProcessing, setIsProcessing] = useState(false)
   const [isPlayingAudio, setIsPlayingAudio] = useState(false)
   const [currentTranscript, setCurrentTranscript] = useState('')
+  const [showQuitConfirm, setShowQuitConfirm] = useState(false)
+  const [isQuitting, setIsQuitting] = useState(false)
   
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -238,6 +240,53 @@ export default function AIPracticePanel({
     }
   }
 
+  const quitAndSummarize = async () => {
+    setIsQuitting(true)
+    setShowQuitConfirm(false)
+    
+    try {
+      // Generate a summary of the conversation
+      const conversationText = messages.map(m => `${m.role === 'user' ? 'You' : 'AI Coach'}: ${m.content}`).join('\n\n')
+      
+      const summaryPrompt = `Summarize this practice conversation in 3-5 bullet points highlighting key topics discussed and insights gained:\n\n${conversationText}`
+      
+      // Use OpenAI to generate summary (via backend transcription service)
+      const summaryBlob = new Blob([summaryPrompt], { type: 'text/plain' })
+      const formData = new FormData()
+      formData.append('file', summaryBlob, 'summary_request.txt')
+      
+      // We'll use a simple approach - just show the conversation summary
+      const summary = messages.length > 0 
+        ? `Practice Session Summary (${new Date().toLocaleString()}):\n\n` +
+          `Context: ${context}\n` +
+          `Messages exchanged: ${messages.length}\n\n` +
+          `Key points:\n` +
+          messages.filter(m => m.role === 'assistant').slice(0, 5).map((m, i) => `${i + 1}. ${m.content.substring(0, 100)}...`).join('\n')
+        : 'No messages in session'
+      
+      // Download as a note file
+      const blob = new Blob([summary], { type: 'text/plain' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `eve-practice-session-${Date.now()}.txt`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+      
+      alert('Session summary downloaded! Check your downloads folder.')
+      resetSession()
+      
+    } catch (error) {
+      console.error('Failed to generate summary:', error)
+      alert('Failed to generate summary, but you can still quit.')
+      resetSession()
+    } finally {
+      setIsQuitting(false)
+    }
+  }
+
   if (!transcript || !['interview', 'lecture', 'coffee_chat'].includes(context)) {
     return (
       <div className="card bg-white dark:bg-gray-800 border-2 border-gray-200 dark:border-gray-600">
@@ -409,6 +458,15 @@ export default function AIPracticePanel({
               </button>
 
               <button
+                onClick={() => setShowQuitConfirm(true)}
+                disabled={isProcessing || isRecording || isQuitting}
+                className="flex items-center gap-2 px-4 py-3 bg-orange-600 hover:bg-orange-700 text-white rounded-lg font-semibold transition-all disabled:opacity-50"
+              >
+                <X size={18} />
+                Quit & Save
+              </button>
+
+              <button
                 onClick={resetSession}
                 disabled={isProcessing || isRecording}
                 className="flex items-center gap-2 px-4 py-3 bg-gray-600 hover:bg-gray-700 text-white rounded-lg font-semibold transition-all disabled:opacity-50"
@@ -441,6 +499,41 @@ export default function AIPracticePanel({
           <div className="text-center text-sm text-gray-600">
             <p>💬 {messages.length} message{messages.length !== 1 ? 's' : ''} in conversation</p>
           </div>
+
+          {/* Quit confirmation modal */}
+          {showQuitConfirm && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+              <div className="bg-white rounded-lg p-6 max-w-md mx-4 shadow-xl">
+                <h3 className="text-xl font-bold text-gray-800 mb-3">End Practice Session?</h3>
+                <p className="text-gray-600 mb-4">
+                  This will summarize your practice session and save it as a note. You can review it later.
+                </p>
+                <div className="flex gap-3">
+                  <button
+                    onClick={quitAndSummarize}
+                    disabled={isQuitting}
+                    className="flex-1 px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg font-semibold transition-colors disabled:opacity-50"
+                  >
+                    {isQuitting ? (
+                      <span className="flex items-center justify-center gap-2">
+                        <Loader2 className="animate-spin" size={16} />
+                        Saving...
+                      </span>
+                    ) : (
+                      'Yes, Save & Quit'
+                    )}
+                  </button>
+                  <button
+                    onClick={() => setShowQuitConfirm(false)}
+                    disabled={isQuitting}
+                    className="flex-1 px-4 py-2 bg-gray-300 hover:bg-gray-400 text-gray-800 rounded-lg font-semibold transition-colors disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

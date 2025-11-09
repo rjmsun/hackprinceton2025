@@ -108,14 +108,51 @@ async def root():
 
 @app.get("/health")
 async def health_check():
+    import subprocess
+    
+    # Check ffmpeg
+    ffmpeg_installed = False
+    ffmpeg_version = "Not installed"
+    try:
+        result = subprocess.run(["ffmpeg", "-version"], capture_output=True, text=True, timeout=2)
+        if result.returncode == 0:
+            ffmpeg_installed = True
+            ffmpeg_version = result.stdout.split('\n')[0].split('version')[1].split()[0] if 'version' in result.stdout else "installed"
+    except:
+        pass
+    
+    openai_configured = bool(os.getenv("OPENAI_API_KEY")) and os.getenv("OPENAI_API_KEY") != "your_openai_api_key_here"
+    gemini_configured = bool(os.getenv("GEMINI_API_KEY")) and os.getenv("GEMINI_API_KEY") != "your_gemini_api_key_here"
+    bedrock_configured = bool(os.getenv("AWS_ACCESS_KEY_ID")) or bool(os.getenv("AWS_BEARER_TOKEN_BEDROCK"))
+    
     return {
         "status": "healthy",
         "version": "1.0.0",
+        "video_analysis_ready": ffmpeg_installed and openai_configured,
         "services": {
-            "ffmpeg": os.system("which ffmpeg > /dev/null 2>&1") == 0,
-            "openai": bool(os.getenv("OPENAI_API_KEY")),
-            "gemini": bool(os.getenv("GEMINI_API_KEY"))
-        }
+            "ffmpeg": {
+                "installed": ffmpeg_installed,
+                "version": ffmpeg_version,
+                "required_for": "video analysis"
+            },
+            "openai_api": {
+                "configured": openai_configured,
+                "required_for": "GPT-4o Vision, Whisper transcription"
+            },
+            "gemini_api": {
+                "configured": gemini_configured,
+                "required_for": "optional (not used for video)"
+            },
+            "aws_bedrock": {
+                "configured": bedrock_configured,
+                "required_for": "emotional vibe analysis"
+            }
+        },
+        "warnings": [
+            "⚠️ ffmpeg not installed - video analysis will NOT work. Install: brew install ffmpeg (macOS) or apt install ffmpeg (Linux)" if not ffmpeg_installed else None,
+            "⚠️ OpenAI API key not configured - core features will not work" if not openai_configured else None,
+            "⚠️ AWS Bedrock not configured - vibe analysis will not work" if not bedrock_configured else None
+        ]
     }
 
 @app.post("/transcribe/file")
@@ -202,11 +239,31 @@ async def transcribe_audio_file(
             if validate:
                 transcript = await transcription_service.validate_and_enhance_transcript(transcript)
             
-            # 3. Extract frames from video
+            # 3. Extract frames from video (OPTIMIZED MODE - smart sampling)
             print(f"🎞️ Extracting frames (mode: {vision_mode})...")
-            # Optimized frame extraction - sample key moments only
-            fps = 0.3  # 1 frame every 3 seconds for speed 
-            frames = video_processor.extract_frames(temp_video_path, fps=fps, max_dimension=256)
+            # OPTIMIZED: Smart frame sampling based on video length
+            video_duration = video_processor.get_video_duration(temp_video_path)
+            
+            if video_duration <= 30:  # Short videos: more frames
+                max_frames = 15
+                fps = max(0.5, max_frames / max(video_duration, 1))
+            elif video_duration <= 120:  # Medium videos: balanced sampling
+                max_frames = 12
+                fps = max(0.1, max_frames / max(video_duration, 1))
+            else:  # Long videos: sparse sampling
+                max_frames = 10
+                fps = max(0.05, max_frames / max(video_duration, 1))
+            
+            # Use higher resolution for better analysis quality
+            frames = video_processor.extract_frames(temp_video_path, fps=fps, max_dimension=512)
+            
+            # Limit to max_frames if we got too many
+            if len(frames) > max_frames:
+                import random
+                frames = random.sample(frames, max_frames)
+                frames.sort(key=lambda x: x['timestamp'])
+            
+            print(f"🎯 Selected {len(frames)} key frames for analysis (duration: {video_duration:.1f}s)")
             session_id = frames[0]["session_id"] if frames else None
             
             # 4. Analyze frames with GPT-4o Vision in BATCHES (fast but quality)
@@ -223,23 +280,86 @@ async def transcribe_audio_file(
                     "is_video": True,
                     "status": "success"
                 }
-            frame_results = await vision_analyzer.analyze_video_frames(frames, mode="fast")
-            print(f"🔍 Vision analysis returned {len(frame_results)} results")
+            
+            try:
+                frame_results = await vision_analyzer.analyze_video_frames(frames, mode="detailed")
+                print(f"🔍 Vision analysis returned {len(frame_results)} results")
+                
+                # Filter out any error frames
+                valid_frames = [f for f in frame_results if "error" not in f and "timestamp" in f]
+                if not valid_frames:
+                    print("⚠️ All frames failed analysis")
+                    return {
+                        "transcript": transcript,
+                        "video_analysis": {
+                            "total_frames": len(frames),
+                            "error": "Vision analysis failed for all frames",
+                            "solution": "Check OpenAI API key and quota"
+                        },
+                        "is_video": True,
+                        "status": "success"
+                    }
+                frame_results = valid_frames
+            except Exception as e:
+                print(f"❌ Vision analysis failed: {e}")
+                return {
+                    "transcript": transcript,
+                    "video_analysis": {
+                        "total_frames": len(frames),
+                        "error": f"Vision analysis failed: {str(e)}",
+                        "solution": "Check OpenAI API key and network"
+                    },
+                    "is_video": True,
+                    "status": "success"
+                }
         
             # 5. Quick aggregation + vibe check with Amazon Bedrock
             print("📊 Aggregating results...")
             video_summary = video_aggregator.aggregate_frame_results(frame_results, transcript)
             
-            # Add Amazon Bedrock vibe check for enhanced analysis
+            # ALWAYS add Amazon Bedrock vibe analysis for videos - this is a key feature
+            print("🎭 Running Amazon Bedrock emotional analysis...")
             try:
                 from services.vibe_service import VibeService
-                vibe_service = VibeService()
-                vibe_result = await vibe_service.analyze_vibe(transcript)
-                video_summary['vibe_analysis'] = vibe_result
-                print("✅ Added Amazon Bedrock vibe analysis")
+                vibe_service_bedrock = VibeService()
+                vibe_result = await vibe_service_bedrock.analyze_vibe(transcript, context="video")
+                
+                # Check if it's an error response
+                if vibe_result.get('vibe') == 'Error':
+                    error_msg = vibe_result.get('evidence', ['Unknown error'])[0]
+                    if 'Model use case details' in error_msg or 'AccessDenied' in error_msg:
+                        video_summary['bedrock_vibe_analysis'] = {
+                            "vibe": "Bedrock access not enabled",
+                            "confidence": 0,
+                            "note": "AWS Bedrock requires account setup. Visit AWS Console to enable Claude model access.",
+                            "error_type": "access_denied"
+                        }
+                    else:
+                        video_summary['bedrock_vibe_analysis'] = {
+                            "vibe": "Bedrock error", 
+                            "confidence": 0, 
+                            "note": error_msg,
+                            "error_type": "configuration_error"
+                        }
+                elif vibe_result.get('vibe') == 'Not configured':
+                    video_summary['bedrock_vibe_analysis'] = {
+                        "vibe": "Bedrock not configured",
+                        "confidence": 0,
+                        "note": "AWS credentials not found in .env file. Add AWS_ACCESS_KEY_ID or AWS_BEARER_TOKEN_BEDROCK",
+                        "error_type": "not_configured"
+                    }
+                else:
+                    # Successfully got vibe analysis
+                    video_summary['bedrock_vibe_analysis'] = vibe_result
+                    print(f"✅ Amazon Bedrock analysis complete: {vibe_result.get('vibe', 'N/A')} (confidence: {vibe_result.get('confidence', 0):.2f})")
             except Exception as e:
                 print(f"⚠️ Bedrock vibe analysis failed: {e}")
-                video_summary['vibe_analysis'] = {"vibe": "Bedrock not available", "confidence": 0}
+                video_summary['bedrock_vibe_analysis'] = {
+                    "vibe": "Bedrock unavailable", 
+                    "confidence": 0, 
+                    "note": f"Error: {str(e)}",
+                    "error_type": "system_error"
+                }
             video_summary["narrative"] = f"Analyzed {len(frames)} frames from {video_summary.get('video_duration_seconds', 0):.0f}s video. Found {len(video_summary.get('key_scenes', []))} key moments."
             
             print(f"✅ Video analysis complete: {len(frames)} frames, {len(video_summary.get('key_scenes', []))} key scenes")

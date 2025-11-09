@@ -5,6 +5,7 @@ import base64
 from pathlib import Path
 import json
 import asyncio
+import os
 
 class GPT4oVisionAnalyzer:
     """OpenAI GPT-4o Vision analyzer - best for OCR and detailed reasoning"""
@@ -111,72 +112,256 @@ class GPT4oVisionAnalyzer:
             }
     
     async def _analyze_single_batch(self, batch: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Analyze a single batch of frames"""
-        content = [
-            {
-                "type": "text", 
-                "text": f"""Analyze these {len(batch)} video frames. Return JSON array:
-[{{"description":"brief scene description", "scene_type":"presentation|meeting|interview|other", "has_people":true/false, "has_text":true/false, "ocr_text":"any visible text", "objects":["key objects"]}}]
-Be concise but accurate."""
-            }
-        ]
-        
-        # Add images
-        for frame in batch:
-            with open(frame["path"], "rb") as image_file:
-                base64_image = base64.b64encode(image_file.read()).decode('utf-8')
-                content.append({
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}
-                })
-        
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[{"role": "user", "content": content}],
-            max_tokens=800,
-            temperature=0.1
-        )
-        
-        batch_results = json.loads(response.choices[0].message.content)
-        
-        # Add metadata
-        for j, result in enumerate(batch_results):
-            result["timestamp"] = batch[j]["timestamp"]
-            result["frame_number"] = batch[j]["number"]
-            result["path"] = batch[j]["path"]
-        
-        return batch_results
+        """Analyze a single batch of frames with robust error handling"""
+        try:
+            # Build content with simple, clear prompt
+            content = [
+                {
+                    "type": "text", 
+                    "text": f"""Analyze these {len(batch)} video frames in order. Return ONLY a JSON array with {len(batch)} objects:
+
+[{{"description":"what you see", "scene_type":"meeting", "has_people":true, "objects":["person","computer"]}}, {{"description":"next frame", "scene_type":"presentation", "has_people":false, "objects":["slide","text"]}}]
+
+Return valid JSON only, no other text."""
+                }
+            ]
+            
+            # Add images with error checking
+            for i, frame in enumerate(batch):
+                try:
+                    if not os.path.exists(frame["path"]):
+                        print(f"❌ Frame file not found: {frame['path']}")
+                        continue
+                        
+                    with open(frame["path"], "rb") as image_file:
+                        image_data = image_file.read()
+                        if len(image_data) == 0:
+                            print(f"❌ Empty image file: {frame['path']}")
+                            continue
+                            
+                        base64_image = base64.b64encode(image_data).decode('utf-8')
+                        content.append({
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{base64_image}",
+                                "detail": "low"  # Use low detail for faster processing
+                            }
+                        })
+                        print(f"✅ Added frame {i+1}/{len(batch)} to batch (size: {len(image_data)} bytes)")
+                except Exception as e:
+                    print(f"❌ Failed to process frame {frame['path']}: {e}")
+                    continue
+            
+            if len(content) == 1:  # Only text, no images loaded
+                print("❌ No valid images in batch")
+                return []
+                
+            print(f"🔍 Sending {len(content)-1} images to GPT-4o Vision...")
+            
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": content}],
+                max_tokens=1000,
+                temperature=0.0  # Zero temperature for consistent results
+            )
+            
+            response_content = response.choices[0].message.content
+            print(f"📝 GPT-4o Vision response: {response_content[:200]}...")
+            
+            if not response_content or response_content.strip() == "":
+                print("❌ Empty response from GPT-4o Vision")
+                return []
+            
+            # Clean and parse JSON
+            json_text = response_content.strip()
+            if json_text.startswith("```json"):
+                json_text = json_text.split("```json")[1].split("```")[0].strip()
+            elif json_text.startswith("```"):
+                json_text = json_text.split("```")[1].split("```")[0].strip()
+                
+            batch_results = json.loads(json_text)
+            
+            if not isinstance(batch_results, list):
+                print(f"❌ Expected list, got {type(batch_results)}")
+                return []
+            
+            print(f"✅ Successfully parsed {len(batch_results)} results")
+            
+            # Add metadata safely
+            for j, result in enumerate(batch_results):
+                if j < len(batch):
+                    result["timestamp"] = batch[j]["timestamp"]
+                    result["frame_number"] = batch[j]["number"]
+                    result["path"] = batch[j]["path"]
+                    result["analyzer"] = "gpt-4o-vision-batch"
+            
+            return batch_results
+            
+        except json.JSONDecodeError as e:
+            print(f"❌ JSON parse error: {e}")
+            print(f"Raw response: {response_content if 'response_content' in locals() else 'No response'}")
+            return []
+        except Exception as e:
+            print(f"❌ Batch analysis failed: {e}")
+            return []
     
-    async def analyze_batch(self, frames: List[Dict[str, Any]], max_frames_per_request: int = 20) -> List[Dict[str, Any]]:
+    async def analyze_batch(self, frames: List[Dict[str, Any]], max_frames_per_request: int = 6) -> List[Dict[str, Any]]:
         """
-        Analyze multiple frames in PARALLEL batches for maximum speed
+        Analyze multiple frames with ROBUST error handling and fallbacks
+        ULTRA-RELIABLE: Multiple fallback strategies
         """
         if not self.client:
+            print("❌ OpenAI API key not configured")
             return [{"error": "OpenAI API key not configured"} for _ in frames]
         
-        # Create tasks for parallel processing
-        tasks = []
-        for i in range(0, len(frames), max_frames_per_request):
-            batch = frames[i:i + max_frames_per_request]
-            tasks.append(asyncio.create_task(self._analyze_single_batch(batch)))
+        print(f"🎞️ Starting GPT-4o Vision analysis for {len(frames)} frames")
         
-        # Process all batches in parallel
+        # STRATEGY 1: Try small batch processing first (most reliable)
         try:
-            batch_results_list = await asyncio.gather(*tasks, return_exceptions=True)
+            batch_size = min(4, len(frames))  # Very small batches for reliability
+            print(f"📊 Strategy 1: Small batch processing (batch_size={batch_size})")
             
-            # Flatten results
-            results = []
-            for batch_results in batch_results_list:
-                if isinstance(batch_results, Exception):
-                    print(f"Batch failed: {batch_results}")
-                    continue
-                results.extend(batch_results)
-            
-            return results
-            
+            if len(frames) <= batch_size:
+                # Single small batch
+                results = await self._analyze_single_batch(frames)
+                if results and len(results) > 0:
+                    print(f"✅ Batch processing successful: {len(results)} results")
+                    return results
+                else:
+                    print("⚠️ Batch processing returned empty results")
+            else:
+                # Multiple small batches
+                all_results = []
+                for i in range(0, len(frames), batch_size):
+                    batch = frames[i:i + batch_size]
+                    print(f"🔍 Processing batch {i//batch_size + 1}/{(len(frames) + batch_size - 1)//batch_size}")
+                    
+                    batch_results = await self._analyze_single_batch(batch)
+                    if batch_results:
+                        all_results.extend(batch_results)
+                    else:
+                        print(f"⚠️ Batch {i//batch_size + 1} failed, continuing...")
+                
+                if all_results and len(all_results) > 0:
+                    print(f"✅ Multi-batch processing successful: {len(all_results)} results")
+                    return all_results
+                    
         except Exception as e:
-            print(f"Parallel batch analysis failed: {e}")
-            return []
+            print(f"❌ Strategy 1 (batch) failed: {e}")
+        
+        # STRATEGY 2: Fallback to sequential processing
+        print("🔄 Strategy 2: Sequential processing fallback")
+        try:
+            results = await self._fallback_sequential_analysis(frames)
+            if results and len(results) > 0:
+                print(f"✅ Sequential processing successful: {len(results)} results")
+                return results
+        except Exception as e:
+            print(f"❌ Strategy 2 (sequential) failed: {e}")
+        
+        # STRATEGY 3: Last resort - create minimal results
+        print("🆘 Strategy 3: Creating minimal fallback results")
+        fallback_results = []
+        for frame in frames[:5]:  # Limit to first 5 frames
+            fallback_results.append({
+                "timestamp": frame["timestamp"],
+                "frame_number": frame["number"],
+                "path": frame["path"],
+                "description": "Frame analysis unavailable - GPT-4o Vision processing failed",
+                "scene_type": "other",
+                "has_people": False,
+                "objects": [],
+                "analyzer": "fallback-minimal",
+                "error": "Vision analysis failed - check API key and quota"
+            })
+        
+        print(f"⚠️ Using minimal fallback: {len(fallback_results)} results")
+        return fallback_results
+    
+    async def _fallback_sequential_analysis(self, frames: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Fallback to sequential analysis if batch processing fails"""
+        print(f"🔄 Falling back to sequential analysis for {len(frames)} frames...")
+        results = []
+        
+        # Process frames one by one with simpler analysis
+        for i, frame in enumerate(frames[:8]):  # Limit to 8 frames for speed
+            try:
+                print(f"🔍 Analyzing frame {i+1}/{min(len(frames), 8)} sequentially...")
+                
+                # Simple individual frame analysis
+                with open(frame["path"], "rb") as image_file:
+                    base64_image = base64.b64encode(image_file.read()).decode('utf-8')
+                
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": "Describe what you see in this video frame. Return JSON: {\"description\":\"what you see\", \"scene_type\":\"meeting|presentation|other\", \"has_people\":true|false, \"objects\":[\"list\",\"of\",\"objects\"]}"
+                                },
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": f"data:image/jpeg;base64,{base64_image}",
+                                        "detail": "low"
+                                    }
+                                }
+                            ]
+                        }
+                    ],
+                    max_tokens=200,
+                    temperature=0.0
+                )
+                
+                content = response.choices[0].message.content
+                if content:
+                    # Parse JSON from response
+                    try:
+                        if content.startswith("```json"):
+                            content = content.split("```json")[1].split("```")[0].strip()
+                        elif content.startswith("```"):
+                            content = content.split("```")[1].split("```")[0].strip()
+                            
+                        result = json.loads(content)
+                        result["timestamp"] = frame["timestamp"]
+                        result["frame_number"] = frame["number"]
+                        result["path"] = frame["path"]
+                        result["analyzer"] = "gpt-4o-vision-sequential"
+                        results.append(result)
+                        print(f"✅ Frame {i+1} analyzed: {result.get('description', 'N/A')[:50]}...")
+                    except json.JSONDecodeError:
+                        # Fallback: use raw text as description
+                        results.append({
+                            "timestamp": frame["timestamp"],
+                            "frame_number": frame["number"],
+                            "path": frame["path"],
+                            "description": content[:100],
+                            "scene_type": "other",
+                            "has_people": False,
+                            "objects": [],
+                            "analyzer": "gpt-4o-vision-text-fallback"
+                        })
+                        print(f"⚠️ Frame {i+1} used text fallback")
+                else:
+                    results.append({
+                        "timestamp": frame["timestamp"],
+                        "frame_number": frame["number"],
+                        "error": "Empty response from GPT-4o Vision"
+                    })
+                    
+            except Exception as e:
+                print(f"❌ Sequential analysis failed for frame {frame['number']}: {e}")
+                results.append({
+                    "timestamp": frame["timestamp"],
+                    "frame_number": frame["number"],
+                    "error": str(e)
+                })
+                
+        print(f"✅ Sequential analysis complete: {len(results)} results")
+        return results
 
 
 class GeminiFlashVisionAnalyzer:
@@ -303,12 +488,8 @@ class HybridVisionAnalyzer:
             print(f"🚀 Fast mode: Analyzing {len(frames)} frames with Gemini Flash")
             return await self.gemini.analyze_batch(frames)
         
-        elif mode == "detailed":
-            # Use GPT-4o Vision with MAX BATCHING for speed + quality
-            print(f"🔍 Detailed mode: Analyzing {len(frames)} frames with GPT-4o Vision (batched, 20 per call)")
-            return await self.gpt4o.analyze_batch(frames, max_frames_per_request=20)
-        
-        else:  # balanced - DISABLED, use detailed instead
-            print(f"🔍 Using detailed mode for quality analysis")
-            return await self.analyze_video_frames(frames, mode="detailed")
+        else:  # "detailed" or any other mode - always use GPT-4o only
+            # Use GPT-4o Vision with optimized batching
+            print(f"🔍 Analyzing {len(frames)} frames with GPT-4o Vision ONLY (no Gemini)")
+            return await self.gpt4o.analyze_batch(frames, max_frames_per_request=12)
 
