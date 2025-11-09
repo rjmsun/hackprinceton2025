@@ -20,13 +20,14 @@ load_dotenv()
 
 app = FastAPI(title="EVE API")
 
-# CORS - Allow all origins for development
+# CORS configuration for development
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins for file uploads
+    allow_origins=["http://localhost:3000"],  # Frontend URL
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=["*"]
 )
 
 # Services
@@ -130,26 +131,27 @@ async def process_transcript(request: TranscriptRequest):
 
 @app.get("/calendar/auth")
 async def get_calendar_auth_url():
-    """Get Google OAuth authorization URL"""
+    """Get Google OAuth authorization URL - redirect to backend callback"""
     try:
-        redirect_uri = f"{os.getenv('FRONTEND_URL', 'http://localhost:3000')}/auth/google/callback"
+        # Use backend callback URL
+        redirect_uri = "http://localhost:8000/calendar/callback"
         auth_url = calendar_service.get_auth_url(redirect_uri)
         return {"auth_url": auth_url, "redirect_uri": redirect_uri}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/calendar/callback")
-async def calendar_oauth_callback(code: str, request: Request):
+async def calendar_oauth_callback(code: str):
     """Handle OAuth callback and exchange code for token"""
     try:
-        # Get redirect URI from frontend URL
-        frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
-        redirect_uri = f"{frontend_url}/auth/google/callback"
+        # Use backend callback URL (same as in auth)
+        redirect_uri = "http://localhost:8000/calendar/callback"
         
         # Exchange code for token
         token_data = calendar_service.exchange_code_for_token(code, redirect_uri)
         
-        # Redirect to frontend with token in URL (in production, use secure cookie/session)
+        # Redirect to frontend success page with tokens
+        frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
         return RedirectResponse(
             url=f"{frontend_url}/auth/success?access_token={token_data['access_token']}&refresh_token={token_data.get('refresh_token', '')}"
         )
@@ -158,6 +160,7 @@ async def calendar_oauth_callback(code: str, request: Request):
         return RedirectResponse(
             url=f"{frontend_url}/auth/error?error={str(e)}"
         )
+        
 
 @app.post("/calendar/schedule")
 async def schedule_tasks(tasks: List[Dict], access_token: str):
