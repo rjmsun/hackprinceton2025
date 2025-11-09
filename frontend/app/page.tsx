@@ -7,6 +7,7 @@ import TasksPanel from '@/components/TasksPanel'
 import SummaryPanel from '@/components/SummaryPanel'
 import axios from 'axios'
 import { Loader2 } from 'lucide-react'
+import { useTheme } from '@/app/layout'
 
 export default function Home() {
   const [transcript, setTranscript] = useState('')
@@ -16,7 +17,8 @@ export default function Home() {
   const [isTranscriptReady, setIsTranscriptReady] = useState(false)
   const [isAnalysisRunning, setIsAnalysisRunning] = useState(false)
 
-  // normalize Gemini responses (in case they come as markdown JSON)
+  const { theme, toggleTheme } = useTheme()
+
   const normalizeGemini = (raw: any) => {
     if (!raw) return null
     if (typeof raw === 'string') {
@@ -64,78 +66,64 @@ export default function Home() {
   }
 
   return (
-    <main className="min-h-screen bg-gradient-to-br from-indigo-100 via-purple-50 to-pink-100 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900 transition-colors duration-500">
-
+    <main className="min-h-screen bg-gray-50 dark:bg-darkbg transition-colors duration-500">
       {/* Global overlay loader */}
       {isProcessing && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl flex items-center gap-3 shadow-xl">
-            <Loader2 className="animate-spin text-indigo-600 dark:text-indigo-400" size={30} />
-            <span className="text-gray-800 dark:text-gray-100 font-semibold">Processing...</span>
+          <div className="bg-white dark:bg-carddark p-5 rounded-2xl flex items-center gap-3 shadow-xl">
+            <Loader2 className="animate-spin text-indigo-600 dark:text-primary" size={30} />
+            <span className="text-gray-800 dark:text-textdark font-semibold">Processing...</span>
           </div>
         </div>
       )}
 
       <div className="container mx-auto px-4 py-8">
-        <header className="sticky top-0 z-40 w-full backdrop-blur-md bg-white/40 dark:bg-gray-800/40 border-b border-white/20 dark:border-gray-700/50 shadow-sm transition-all">
+        {/* Header */}
+        <header className="sticky top-0 z-40 w-full backdrop-blur-md bg-white/40 dark:bg-[#363435] border-b border-white/20 dark:border-gray-700/50 shadow-sm transition-all">
           <div className="max-w-7xl mx-auto flex items-center justify-between px-6 py-3">
-            {/* Left side: Logo + Name */}
+
+            {/* Logo */}
             <div className="flex items-center gap-3">
               <img
-                src="/logo.svg"
+                src={theme === 'dark' ? '/logo-dark.svg' : '/logo.svg'}
                 alt="EVE Logo"
-                className="h-10 w-10 md:h-12 md:w-12 object-contain transition-transform duration-300 hover:scale-105 dark:drop-shadow-[0_0_0.5rem_#6366f1]"
-                onError={(e) => {
-                  const formats = ['png', 'jpg', 'jpeg', 'webp']
-                  const currentSrc = e.currentTarget.src
-                  const basePath = currentSrc.substring(0, currentSrc.lastIndexOf('.'))
-                  let formatIndex = 0
-                  const tryNextFormat = () => {
-                    if (formatIndex < formats.length) {
-                      e.currentTarget.src = `${basePath}.${formats[formatIndex]}`
-                      formatIndex++
-                    }
-                  }
-                  e.currentTarget.onerror = tryNextFormat
-                  tryNextFormat()
-                }}
+                className="h-10 w-10 md:h-12 md:w-12 object-contain transition-transform duration-300 hover:scale-105"
               />
               <div>
-                <h1 className="text-2xl font-bold text-gray-800 dark:text-gray-100 tracking-tight">
-                  EVE
-                </h1>
-                <p className="text-sm text-gray-600 dark:text-gray-400">
-                  Your Everyday Virtual Executive
-                </p>
+                <h1 className="text-2xl font-bold text-gray-800 dark:text-textdark tracking-tight">EVE</h1>
+                <p className="text-sm text-gray-600 dark:text-textmuted">Your Everyday Virtual Executive</p>
               </div>
             </div>
 
-            {/* Right side: Integrations */}
-            <div className="hidden md:flex gap-2 flex-wrap justify-end">
-              {[
-                '🎙️ Whisper',
-                '🧠 GPT-4o',
-                '🤖 Gemini 2.5',
-                '📅 Calendar',
-                '🗣️ ElevenLabs',
-              ].map((tech) => (
-                <span
-                  key={tech}
-                  className="px-3 py-1 bg-white/70 dark:bg-gray-700/50 rounded-full text-xs text-gray-700 dark:text-gray-200 shadow-sm"
-                >
-                  {tech}
-                </span>
-              ))}
+            {/* Right: Integrations + Dark Mode Toggle */}
+            <div className="flex items-center gap-2">
+              <div className="hidden md:flex gap-2 flex-wrap justify-end">
+                {['🎙️ Whisper', '🧠 GPT-4o', '🤖 Gemini 2.5', '📅 Calendar', '🗣️ ElevenLabs'].map((tech) => (
+                  <span
+                    key={tech}
+                    className="px-3 py-1 bg-white/70 dark:bg-buttondark rounded-full text-xs text-gray-700 dark:text-textdark shadow-sm"
+                  >
+                    {tech}
+                  </span>
+                ))}
+              </div>
+
+              <button
+                onClick={toggleTheme}
+                className="ml-4 px-3 py-1 w-[150px] bg-gray-200 dark:bg-buttondark rounded-lg shadow-sm text-gray-800 dark:text-textdark hover:bg-gray-300 dark:hover:bg-buttondarkHover transition-colors text-sm flex items-center justify-center"
+              >
+                {theme === 'light' ? '🌙 Dark Mode' : '☀️ Light Mode'}
+              </button>
             </div>
           </div>
         </header>
 
-        {/* Blank lip section */}
+        {/* Spacer */}
         <div className="h-6 md:h-8 bg-transparent"></div>
 
         {/* Panels */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-          <div className="card bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 shadow-md transition-all">
+          <div className="card bg-white dark:bg-carddark text-gray-900 dark:text-textdark shadow-md transition-colors">
             <RecordingPanel
               onTranscriptUpdate={setTranscript}
               onProcessingChange={setIsProcessing}
@@ -145,7 +133,7 @@ export default function Home() {
             />
           </div>
 
-          <div className="card bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 shadow-md transition-all">
+          <div className="card bg-white dark:bg-carddark text-gray-900 dark:text-textdark shadow-md transition-colors">
             <SummaryPanel summary={summary} isProcessing={isProcessing || isAnalysisRunning} />
           </div>
         </div>
@@ -156,7 +144,7 @@ export default function Home() {
             <button
               onClick={handleSmartAnalysis}
               disabled={isAnalysisRunning}
-              className="px-6 py-3 bg-green-600 text-white font-semibold rounded-lg shadow-md hover:bg-green-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 mx-auto"
+              className="px-6 py-3 bg-primary hover:bg-indigo-700 text-white font-semibold rounded-lg shadow-md transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 mx-auto"
             >
               {isAnalysisRunning ? (
                 <>
@@ -172,12 +160,12 @@ export default function Home() {
 
         {/* Tasks + Dashboard */}
         <div className="grid grid-cols-1 gap-6 mb-6">
-          <div className="card bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 shadow-md transition-all">
+          <div className="card bg-white dark:bg-carddark text-gray-900 dark:text-textdark shadow-md transition-colors">
             <TasksPanel tasks={tasks} onTasksUpdate={setTasks} />
           </div>
         </div>
 
-        <div className="card bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 shadow-md transition-all">
+        <div className="card bg-white dark:bg-carddark text-gray-900 dark:text-textdark shadow-md transition-colors">
           <Dashboard tasksCount={tasks.length} transcript={transcript} />
         </div>
       </div>
