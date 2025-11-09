@@ -16,6 +16,23 @@ export default function Home() {
   const [isTranscriptReady, setIsTranscriptReady] = useState(false)
   const [isAnalysisRunning, setIsAnalysisRunning] = useState(false)
 
+  // Attempt to parse Gemini outputs that may arrive as a markdown-wrapped JSON string
+  const normalizeGemini = (raw: any) => {
+    if (!raw) return null;
+    if (typeof raw === 'string') {
+      const cleaned = raw
+        .trim()
+        .replace(/^```(?:json)?\s*/i, '')
+        .replace(/```\s*$/i, '');
+      try {
+        return JSON.parse(cleaned);
+      } catch {
+        return raw; // fall back to string if parsing fails
+      }
+    }
+    return raw;
+  };
+
   const handleSmartAnalysis = async () => {
     if (!transcript) return;
     setIsAnalysisRunning(true);
@@ -28,14 +45,15 @@ export default function Home() {
       });
       setTasks(response.data.tasks || []);
       const openAiSummary = response.data.summary_openai || response.data.summary || null;
-      const geminiSummary = response.data.summary_gemini || null;
+      const geminiSummary = normalizeGemini(response.data.summary_gemini || null);
       setSummary({ 
         ...openAiSummary, 
         gemini_alternative: geminiSummary 
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error('Smart analysis error:', error);
-      alert('Failed to generate smart analysis. Please check the console.');
+      const detail = error?.response?.data?.detail || error?.message || 'Unknown error';
+      alert(`Failed to generate smart analysis. Details: ${detail}`);
     } finally {
       setIsAnalysisRunning(false);
       setIsProcessing(false);

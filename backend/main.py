@@ -85,44 +85,100 @@ async def transcribe_audio_file(file: UploadFile = File(...), validate: bool = T
 
 @app.post("/process/transcript")
 async def process_transcript(request: TranscriptRequest):
-    """Process transcript: validate, clean, extract tasks, generate summary"""
+    """SPEED OPTIMIZED: Process transcript with adaptive summaries"""
     try:
-        # Step 0: Validate and fact-check transcript (GPT-4o)
-        validated_text = await transcription_service.validate_and_enhance_transcript(request.text)
+        start_ts = datetime.utcnow()
+        text = request.text
+        word_count = len(text.split())
         
-        # Step 1: Clean and segment transcript (GPT-4o)
-        cleaned = await reasoning_service.clean_transcript(validated_text)
+        print(f"[FAST] Processing {word_count} words...")
+
+        # SPEED: Skip cleaning for short transcripts, run everything in parallel
+        if word_count < 200:
+            # Ultra-fast path for short transcripts
+            sections = [{"title": "Brief", "speakered_text": [{"speaker": "Speaker", "text": text}]}]
+            
+            # Run tasks + both summaries in parallel
+            tasks_task = asyncio.create_task(reasoning_service.extract_tasks(sections, timezone=request.timezone))
+            openai_task = asyncio.create_task(reasoning_service.generate_summary(sections, []))
+            gemini_task = asyncio.create_task(gemini_service.generate_summary_gemini(text))
+            
+            try:
+                tasks_dict, summary_openai, summary_gemini = await asyncio.gather(
+                    tasks_task, openai_task, gemini_task, return_exceptions=True
+                )
+            except Exception:
+                # Fallback if parallel fails
+                tasks_dict = {"tasks": []}
+                summary_openai = None
+                summary_gemini = None
+        else:
+            # Standard path: clean first, then parallel processing
+            try:
+                cleaned = await reasoning_service.clean_transcript(text)
+                sections = cleaned.get("sections", [])
+            except Exception:
+                sections = [{"title": "Conversation", "speakered_text": [{"speaker": "Speaker", "text": text}]}]
+            
+            # Run all AI calls in parallel
+            tasks_task = asyncio.create_task(reasoning_service.extract_tasks(sections, timezone=request.timezone))
+            gemini_task = asyncio.create_task(gemini_service.generate_summary_gemini(text))
+            
+            # Wait for tasks first, then use for OpenAI summary
+            try:
+                tasks_dict = await tasks_task
+                tasks_list = tasks_dict.get("tasks", []) if isinstance(tasks_dict, dict) else []
+            except Exception:
+                tasks_list = []
+            
+            openai_task = asyncio.create_task(reasoning_service.generate_summary(sections, tasks_list))
+            
+            try:
+                summary_openai, summary_gemini = await asyncio.gather(
+                    openai_task, gemini_task, return_exceptions=True
+                )
+            except Exception:
+                summary_openai = summary_gemini = None
+
+        # Normalize results
+        tasks_list = tasks_dict.get("tasks", []) if isinstance(tasks_dict, dict) else []
         
-        # Step 2: Extract tasks (GPT-4o)
-        tasks = await reasoning_service.extract_tasks(
-            cleaned["sections"], 
-            timezone=request.timezone
-        )
-        
-        # Step 3: Generate DUAL summaries (OpenAI + Gemini)
-        openai_summary = await reasoning_service.generate_summary(
-            cleaned["sections"], 
-            tasks["tasks"]
-        )
-        
-        gemini_summary = await gemini_service.generate_summary_gemini(validated_text)
-        
-        # Log to analytics
-        analytics_service.track_event(
-            user_id=request.user_id,
-            event_name="transcript_processed",
-            properties={
-                "task_count": len(tasks["tasks"]),
-                "section_count": len(cleaned["sections"])
-            }
-        )
-        
+        # Handle exceptions in results
+        if isinstance(summary_openai, Exception):
+            print(f"[FAST] OpenAI failed: {summary_openai}")
+            summary_openai = None
+        if isinstance(summary_gemini, Exception):
+            print(f"[FAST] Gemini failed: {summary_gemini}")
+            summary_gemini = None
+
+        duration = (datetime.utcnow() - start_ts).total_seconds()
+        print(f"[FAST] Completed in {duration:.1f}s")
+
+        # Analytics (fire and forget)
+        try:
+            analytics_service.track_event(
+                user_id=request.user_id,
+                event_name="transcript_processed_fast",
+                properties={
+                    "word_count": word_count,
+                    "task_count": len(tasks_list),
+                    "duration_s": duration,
+                    "fast_path": word_count < 200
+                }
+            )
+        except:
+            pass
+
+        if not summary_openai and not summary_gemini:
+            raise Exception("Both AI summaries failed. Check API keys and network.")
+
         return {
-            "cleaned": cleaned,
-            "tasks": tasks["tasks"],
-            "summary_openai": openai_summary,
-            "summary_gemini": gemini_summary,
-            "summary": openai_summary,  # Default for backward compatibility
+            "tasks": tasks_list,
+            "summary_openai": summary_openai,
+            "summary_gemini": summary_gemini,
+            "summary": summary_openai or summary_gemini,
+            "word_count": word_count,
+            "duration_s": duration,
             "status": "success"
         }
     except Exception as e:

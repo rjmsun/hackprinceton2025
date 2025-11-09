@@ -151,7 +151,7 @@ Return only the question text, no JSON."""
         return response.choices[0].message.content.strip('"')
     
     async def generate_summary(self, sections: List[Dict], tasks: List[Dict]) -> Dict:
-        """Generate adaptive smart summary that captures understanding, confusion, and gaps"""
+        """Generate adaptive smart summary that scales with transcript length"""
         if not self.openai_client:
             return {
                 "short_summary": "[DEMO] Add OPENAI_API_KEY for summaries",
@@ -162,72 +162,56 @@ Return only the question text, no JSON."""
                 "strengths": []
             }
         
-        prompt = f"""You are an ADAPTIVE learning assistant analyzing this conversation. Your job is to create a summary that ADAPTS to what was actually said - both strengths AND gaps.
+        # Calculate transcript length for adaptive sizing
+        total_text = " ".join([
+            " ".join([item.get("text", "") for item in section.get("speakered_text", [])])
+            for section in sections
+        ])
+        word_count = len(total_text.split())
+        
+        # Adaptive sizing based on length
+        if word_count < 300:
+            summary_bullets = "2-3"
+            insights_count = "2-3"
+            questions_count = "2-3"
+            max_tokens = 600
+        elif word_count < 800:
+            summary_bullets = "4-6"
+            insights_count = "3-4"
+            questions_count = "3-4"
+            max_tokens = 800
+        else:
+            summary_bullets = "6-10"
+            insights_count = "4-6"
+            questions_count = "4-6"
+            max_tokens = 1200
+        
+        prompt = f"""ADAPTIVE summary for {word_count} word transcript. Scale detail appropriately.
 
-CRITICAL: Look for expressions of confusion, uncertainty, or gaps like:
-- "I don't understand [concept]"
-- "I'm not sure about [topic]"
-- "This part is confusing"
-- "I need to learn more about [X]"
-- "What does [term] mean?"
-- Any indication of struggling with a concept
+Key areas to capture:
+- Understanding vs confusion
+- Strengths vs knowledge gaps
+- Main topics and decisions
 
-Provide:
+Provide JSON:
+1. **short_summary**: 1-2 sentences capturing essence and any struggles
+2. **detailed_summary**: {summary_bullets} bullet points covering topics, decisions, tasks, and confusion
+3. **insights**: {insights_count} observations about understanding and communication
+4. **knowledge_gaps**: Concepts where confusion/uncertainty was expressed (empty if none)
+5. **strengths**: Areas of demonstrated understanding
+6. **clarifying_questions**: {questions_count} follow-up questions
 
-1. **short_summary**: One sentence capturing the essence (both what was covered AND any struggles)
-
-2. **detailed_summary**: 4-6 bullet points including:
-   - Main topics discussed
-   - Key points made
-   - Important decisions/tasks
-   - **CRITICAL**: Any concepts the speaker struggled with or didn't understand
-
-3. **insights**: 3-5 observations about:
-   - What the speaker understands well
-   - Communication patterns
-   - Areas showing mastery
-   - Underlying themes
-
-4. **knowledge_gaps**: IMPORTANT - Explicitly list any concepts/topics where the speaker expressed:
-   - Confusion or uncertainty
-   - Lack of understanding
-   - Need for clarification
-   - Gaps in knowledge
-   If NONE found, return empty array.
-
-5. **strengths**: 2-3 areas where the speaker demonstrated strong understanding
-
-6. **clarifying_questions**: 3-4 questions that would help:
-   - Address any confusion mentioned
-   - Fill knowledge gaps
-   - Clarify ambiguous points
-   - Deepen understanding
-
-BE ADAPTIVE - if they say "I don't get X", your summary should say "Struggled with understanding X" not ignore it.
-
-Return JSON: {{
-  "short_summary": "...",
-  "detailed_summary": ["...", "..."],
-  "insights": ["...", "..."],
-  "knowledge_gaps": ["concept/topic where confusion was expressed", "..."],
-  "strengths": ["...", "..."],
-  "clarifying_questions": ["...", "..."]
-}}
-
-Transcript Sections:
-{json.dumps(sections, indent=2)}
-
-Extracted Tasks:
-{json.dumps(tasks, indent=2)}"""
+Sections: {json.dumps(sections, indent=2)}
+Tasks: {json.dumps(tasks, indent=2)}"""
 
         response = self.openai_client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-4o-mini",  # Faster model for speed
             messages=[
-                {"role": "system", "content": "You are an adaptive learning assistant. Your summaries must CAPTURE and HIGHLIGHT any expressions of confusion, uncertainty, or knowledge gaps. Don't just summarize the 'good parts' - adapt to what was actually said, including struggles. Return only valid JSON."},
+                {"role": "system", "content": "Create adaptive summaries. Scale detail with content length. Capture both strengths and gaps. Return valid JSON."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.3,
-            max_tokens=1000,
+            temperature=0.2,  # Lower for speed
+            max_tokens=max_tokens,
             response_format={"type": "json_object"}
         )
         
