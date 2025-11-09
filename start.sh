@@ -1,76 +1,101 @@
 #!/bin/bash
 
-echo "🚀 Starting EVE: The Everyday Virtual Executive"
+# --- EVE Startup Script ---
+# This script cleans up old processes, sets up the environment,
+# and starts both the backend and frontend services.
+
+echo "🚀 Starting EVE: Your Everyday Virtual Executive"
+echo "----------------------------------------------------"
+
+# Function to kill processes on a given port
+kill_process_on_port() {
+  PORT=$1
+  echo "🧹 Checking for process on port $PORT..."
+  PID=$(lsof -ti:$PORT)
+  
+  if [ -n "$PID" ]; then
+    echo "🔪 Terminating process $PID on port $PORT..."
+    kill -9 $PID
+    sleep 1
+  else
+    echo "✅ No process found on port $PORT."
+  fi
+}
+
+# 1. Clean up existing processes
+kill_process_on_port 8000 # Backend
+kill_process_on_port 3000 # Frontend
 echo ""
 
-# Check if .env exists
+# 2. Check for .env file and API keys
 if [ ! -f .env ]; then
-    echo "⚠️  No .env file found!"
-    echo "📝 Creating .env from env.example..."
+    echo "⚠️  No .env file found. Creating one from env.example..."
     cp env.example .env
-    echo ""
-    echo "✅ Created .env file"
-    echo "⚠️  IMPORTANT: Edit .env and add your API keys before continuing!"
-    echo ""
-    echo "Required API keys:"
-    echo "  - OPENAI_API_KEY (get from: https://platform.openai.com/api-keys)"
-    echo "  - ELEVENLABS_API_KEY (get from: https://elevenlabs.io/)"
-    echo "  - GEMINI_API_KEY (get from: https://aistudio.google.com/apikey)"
-    echo ""
-    echo "After adding your keys, run this script again."
+    echo "✅ Created .env file."
+    echo "🛑 IMPORTANT: Please open the '.env' file and add your API keys."
+    echo "   You need keys for OpenAI, ElevenLabs, and Gemini."
+    echo "   After adding keys, please run './start.sh' again."
     exit 1
 fi
+echo "✅ .env file found."
+echo ""
 
-echo "📦 Setting up backend..."
+# 3. Set up and start Backend
+echo "🛠️  Setting up Python backend..."
 cd backend
 
-# Create venv if it doesn't exist
 if [ ! -d "venv" ]; then
-    echo "Creating Python virtual environment..."
+    echo "🐍 Creating Python virtual environment..."
     python3 -m venv venv
 fi
 
-# Activate venv and install
+echo " activating virtual environment..."
 source venv/bin/activate
+echo "📦 Installing backend dependencies from requirements.txt..."
 pip install -q -r requirements.txt
+echo "✅ Backend setup complete."
 
-echo "✅ Backend ready"
+echo " EVE backend server on http://localhost:8000"
+./venv/bin/python run.py &
+BACKEND_PID=$!
+cd ..
+sleep 3 # Give backend a moment to start
+
+# 4. Health check for backend
+echo ""
+echo "🩺 Performing health check on backend..."
+if curl -s "http://localhost:8000/health" | grep -q '"status":"healthy"'; then
+  echo "✅ Backend is healthy and running!"
+else
+  echo "❌ Backend failed to start. Please check the logs."
+  kill $BACKEND_PID
+  exit 1
+fi
 echo ""
 
-# Start backend in background
-echo "🔧 Starting FastAPI backend on port 8000..."
-python main.py &
-BACKEND_PID=$!
 
-cd ..
-
-echo "📦 Setting up frontend..."
+# 5. Set up and start Frontend
+echo "🎨 Setting up Node.js frontend..."
 cd frontend
 
-# Install npm packages if needed
 if [ ! -d "node_modules" ]; then
-    echo "Installing Node packages..."
+    echo "📦 Installing frontend dependencies with npm..."
     npm install
 fi
+echo "✅ Frontend setup complete."
 
-echo "✅ Frontend ready"
+echo "🚀 Launching Next.js frontend on http://localhost:3000"
 echo ""
-
-# Start frontend
-echo "🎨 Starting Next.js frontend on port 3000..."
-echo ""
-echo "=========================================="
-echo "✅ EVE is running!"
-echo "=========================================="
-echo ""
-echo "📱 Open your browser to: http://localhost:3000"
-echo ""
-echo "To stop EVE:"
-echo "  Press Ctrl+C"
+echo "----------------------------------------------------"
+echo "🎉 EVE is now running!"
+echo "   Please open your browser to: http://localhost:3000"
+echo "----------------------------------------------------"
+echo "   To stop the application, press Ctrl+C in this terminal."
 echo ""
 
-npm run dev
+# Trap Ctrl+C and kill the backend process
+trap 'echo "
+🛑 Shutting down EVE..."; kill $BACKEND_PID; exit 0' INT
 
-# Cleanup on exit
-kill $BACKEND_PID 2>/dev/null
+npm run dev -- --port 3000
 

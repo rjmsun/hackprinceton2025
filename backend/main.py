@@ -8,17 +8,27 @@ import os
 from dotenv import load_dotenv
 import asyncio
 from datetime import datetime
+from pathlib import Path
+import tempfile
 
 from services.transcription import TranscriptionService
 from services.reasoning import ReasoningService
 from services.calendar_service import CalendarService
 from services.tts import TTSService
-from services.analytics import AnalyticsService
 from services.gemini_service import GeminiService
+from services.coaching_service import CoachingService
+from services.vibe_service import VibeService
+from services.interactive_coaching_service import InteractiveCoachingService
+from services.video_service import VideoProcessor, VideoAnalysisAggregator
+from services.vision_analyzers import HybridVisionAnalyzer
 
 load_dotenv()
 
-app = FastAPI(title="EVE API")
+app = FastAPI(
+    title="EVE API",
+    description="AI-powered video and audio analysis platform",
+    version="1.0.0"
+)
 
 # CORS configuration for development
 app.add_middleware(
@@ -40,14 +50,24 @@ calendar_service = CalendarService(
     client_secret=os.getenv("GOOGLE_CLIENT_SECRET")
 )
 tts_service = TTSService(api_key=os.getenv("ELEVENLABS_API_KEY"))
-analytics_service = AnalyticsService(api_key=os.getenv("AMPLITUDE_API_KEY"))
 gemini_service = GeminiService(api_key=os.getenv("GEMINI_API_KEY"))
+coaching_service = CoachingService(openai_key=os.getenv("OPENAI_API_KEY"))
+vibe_service = VibeService()
+interactive_coaching_service = InteractiveCoachingService(openai_key=os.getenv("OPENAI_API_KEY"))
+video_processor = VideoProcessor()
+vision_analyzer = HybridVisionAnalyzer(
+    openai_key=os.getenv("OPENAI_API_KEY"),
+    gemini_key=os.getenv("GEMINI_API_KEY")
+)
+video_aggregator = VideoAnalysisAggregator()
 
 # Models
 class TranscriptRequest(BaseModel):
     text: str
     user_id: Optional[str] = "default"
     timezone: Optional[str] = "America/New_York"
+    context: Optional[str] = "general"
+    media_type: Optional[str] = "audio"
 
 
 
@@ -56,6 +76,29 @@ class TaskApproval(BaseModel):
     approved: bool
     modifications: Optional[Dict[str, Any]] = None
 
+class InteractiveRequest(BaseModel):
+    transcript: str
+    context: str
+    coaching_insights: Optional[Dict] = None
+
+class FeedbackRequest(BaseModel):
+    original_question: str
+    user_response: str
+    context: str
+    coaching_tip: Optional[str] = ""
+    scenario_type: str
+
+class ConversationStartRequest(BaseModel):
+    transcript: str
+    context: str
+    coaching_insights: Optional[Dict] = None
+
+class ConversationContinueRequest(BaseModel):
+    user_message: str
+    conversation_history: List[Dict]
+    context_data: Dict
+    session_type: str
+
 class CalendarAuth(BaseModel):
     code: str
 
@@ -63,56 +106,220 @@ class CalendarAuth(BaseModel):
 async def root():
     return {"status": "EVE API running", "version": "1.0.0"}
 
+@app.get("/health")
+async def health_check():
+    return {
+        "status": "healthy",
+        "version": "1.0.0",
+        "services": {
+            "ffmpeg": os.system("which ffmpeg > /dev/null 2>&1") == 0,
+            "openai": bool(os.getenv("OPENAI_API_KEY")),
+            "gemini": bool(os.getenv("GEMINI_API_KEY"))
+        }
+    }
+
 @app.post("/transcribe/file")
-async def transcribe_audio_file(file: UploadFile = File(...), validate: bool = True):
-    """Upload audio file for transcription with optional fact-checking"""
+async def transcribe_audio_file(
+    file: UploadFile = File(...), 
+    validate: bool = True,
+    analyze_video: bool = False,
+    vision_mode: str = "balanced"  # "fast", "balanced", "detailed"
+):
+    """
+    Upload audio/video file for transcription and analysis
+    
+    Args:
+        file: Audio or video file
+        validate: Whether to validate/enhance transcript with GPT-4o
+        analyze_video: If video, whether to run visual analysis
+        vision_mode: "fast" (Gemini only), "balanced" (hybrid), "detailed" (GPT-4o only)
+    """
+    temp_files = []  # Track files to cleanup
+    session_id = None
+    
     try:
-        # Log file info for debugging
-        print(f"Received file: {file.filename}, content_type: {file.content_type}, size: {file.size if hasattr(file, 'size') else 'unknown'}")
+        filename = file.filename or "media.mp3"
+        file_size_mb = file.size / (1024 * 1024) if file.size else 0
+        print(f"Received file: {filename}, content_type: {file.content_type}, size: {file_size_mb:.2f}MB")
         
-        # Stream-friendly: use underlying file object instead of reading all to memory
-        file.file.seek(0)
-        transcript = await transcription_service.transcribe_file_obj(file.file, file.filename or "audio.mp3")
+        # Check file size (200MB limit for videos, 100MB for audio)
+        max_size = 200 * 1024 * 1024  # 200MB for videos
+        if file.size and file.size > max_size:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File too large: {file_size_mb:.1f}MB. Maximum size is 200MB for videos, 100MB for audio."
+            )
         
-        # Fact-check and enhance transcript using GPT-4o
+        # Check if this is a video file (prefer content-type over extension)
+        content_type = file.content_type or ""
+        is_audio_ct = content_type.startswith("audio/")
+        is_video_ct = content_type.startswith("video/")
+        is_video_ext = video_processor.is_video_file(filename)
+        # If content-type says audio, force audio even if extension is e.g. .webm
+        is_video = (is_video_ct or (is_video_ext and not is_audio_ct))
+        print(f"File type detected: {'Video' if is_video else 'Audio'} (content_type={content_type})")
+        
+        if is_video and analyze_video:
+            print(f"🎥 Video file detected: {filename}")
+            print(f"Video analysis requested: {analyze_video}")
+            
+            # Check if required API keys are available for video analysis
+            if not os.getenv("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY") == "your_openai_api_key_here":
+                return {
+                    "transcript": "ERROR: OpenAI API key required for video analysis",
+                    "video_analysis": {
+                        "error": "OPENAI_API_KEY not configured. Video analysis requires GPT-4o Vision.",
+                        "solution": "Add OPENAI_API_KEY=sk-... to your .env file"
+                    },
+                    "is_video": True,
+                    "status": "error"
+                }
+            
+            if not os.getenv("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY") == "your_gemini_api_key_here":
+                print("⚠️ Warning: Gemini API key not configured. Using OpenAI only (slower).")
+            
+            # Save uploaded file temporarily
+            print("💾 Saving uploaded video to temporary file...")
+            temp_video = tempfile.NamedTemporaryFile(delete=False, suffix=Path(filename).suffix)
+            file_content = await file.read()
+            print(f"📁 Read {len(file_content)} bytes from upload")
+            temp_video.write(file_content)
+            temp_video.flush()
+            temp_video_path = temp_video.name
+            temp_files.append(temp_video_path)
+            print(f"💾 Saved to: {temp_video_path}")
+            
+            # 1. Extract audio from video
+            print("📻 Extracting audio from video...")
+            audio_path = video_processor.extract_audio(temp_video_path)
+            temp_files.append(audio_path)
+            
+            # 2. Transcribe audio
+            print("🎤 Transcribing audio with Whisper...")
+            with open(audio_path, 'rb') as audio_file:
+                transcript = await transcription_service.transcribe_file_obj(audio_file, "extracted_audio.wav")
+            
+            if validate:
+                transcript = await transcription_service.validate_and_enhance_transcript(transcript)
+            
+            # 3. Extract frames from video
+            print(f"🎞️ Extracting frames (mode: {vision_mode})...")
+            # Optimized frame extraction - sample key moments only
+            fps = 0.3  # 1 frame every 3 seconds for speed 
+            frames = video_processor.extract_frames(temp_video_path, fps=fps, max_dimension=256)
+            session_id = frames[0]["session_id"] if frames else None
+            
+            # 4. Analyze frames with GPT-4o Vision in BATCHES (fast but quality)
+            print(f"👁️ Analyzing {len(frames)} frames with GPT-4o Vision (batched)...")
+            if not frames:
+                print("⚠️ No frames extracted from video!")
+                return {
+                    "transcript": transcript,
+                    "video_analysis": {
+                        "total_frames": 0,
+                        "error": "No frames could be extracted from video",
+                        "solution": "Check video format and content"
+                    },
+                    "is_video": True,
+                    "status": "success"
+                }
+            frame_results = await vision_analyzer.analyze_video_frames(frames, mode="fast")
+            print(f"🔍 Vision analysis returned {len(frame_results)} results")
+        
+            # 5. Quick aggregation + vibe check with Amazon Bedrock
+            print("📊 Aggregating results...")
+            video_summary = video_aggregator.aggregate_frame_results(frame_results, transcript)
+            
+            # Add Amazon Bedrock vibe check for enhanced analysis
+            try:
+                from services.vibe_service import VibeService
+                vibe_service = VibeService()
+                vibe_result = await vibe_service.analyze_vibe(transcript)
+                video_summary['vibe_analysis'] = vibe_result
+                print("✅ Added Amazon Bedrock vibe analysis")
+            except Exception as e:
+                print(f"⚠️ Bedrock vibe analysis failed: {e}")
+                video_summary['vibe_analysis'] = {"vibe": "Bedrock not available", "confidence": 0}
+            video_summary["narrative"] = f"Analyzed {len(frames)} frames from {video_summary.get('video_duration_seconds', 0):.0f}s video. Found {len(video_summary.get('key_scenes', []))} key moments."
+            
+            print(f"✅ Video analysis complete: {len(frames)} frames, {len(video_summary.get('key_scenes', []))} key scenes")
+            
+            return {
+                "transcript": transcript,
+                "video_analysis": video_summary,
+                "raw_frames": frame_results if vision_mode == "detailed" else [],  # Include raw data only in detailed mode
+                "is_video": True,
+                "status": "success",
+                "validated": validate,
+                "vision_mode": vision_mode
+            }
+        
+        else:
+            # Standard audio transcription (existing flow)
+            print("🎤 Audio file - using standard transcription")
+            file.file.seek(0)
+            transcript = await transcription_service.transcribe_file_obj(file.file, filename)
         if validate:
             transcript = await transcription_service.validate_and_enhance_transcript(transcript)
+        return {
+            "transcript": transcript,
+            "is_video": False,
+            "status": "success",
+            "validated": validate
+        }
         
-        return {"transcript": transcript, "status": "success", "validated": validate}
     except Exception as e:
         error_msg = str(e)
-        print(f"Transcription error: {error_msg}")
-        raise HTTPException(status_code=500, detail=f"Transcription failed: {error_msg}")
+        print(f"Transcription/Analysis error: {error_msg}")
+        raise HTTPException(status_code=500, detail=f"Processing failed: {error_msg}")
+    
+    finally:
+        # Cleanup temporary files
+        for temp_file in temp_files:
+            try:
+                if os.path.exists(temp_file):
+                    os.remove(temp_file)
+            except:
+                pass
+        
+        # Cleanup frame session
+        if session_id:
+            try:
+                video_processor.cleanup_session(session_id)
+            except:
+                pass
 
 @app.post("/process/transcript")
 async def process_transcript(request: TranscriptRequest):
-    """SPEED OPTIMIZED: Process transcript with adaptive summaries"""
+    """SPEED OPTIMIZED: Process transcript with adaptive summaries and coaching"""
     try:
         start_ts = datetime.utcnow()
         text = request.text
+        context = request.context
         word_count = len(text.split())
         
-        print(f"[FAST] Processing {word_count} words...")
+        print(f"[FAST] Processing {word_count} words with context: {context}...")
 
         # SPEED: Skip cleaning for short transcripts, run everything in parallel
         if word_count < 200:
             # Ultra-fast path for short transcripts
             sections = [{"title": "Brief", "speakered_text": [{"speaker": "Speaker", "text": text}]}]
             
-            # Run tasks + both summaries in parallel
+            # Run tasks + both summaries + coaching in parallel
             tasks_task = asyncio.create_task(reasoning_service.extract_tasks(sections, timezone=request.timezone))
             openai_task = asyncio.create_task(reasoning_service.generate_summary(sections, []))
             gemini_task = asyncio.create_task(gemini_service.generate_summary_gemini(text))
+            coaching_task = asyncio.create_task(coaching_service.generate_coaching_insights(text, context))
+            vibe_task = asyncio.create_task(vibe_service.analyze_vibe(text, context))
             
             try:
-                tasks_dict, summary_openai, summary_gemini = await asyncio.gather(
-                    tasks_task, openai_task, gemini_task, return_exceptions=True
+                tasks_dict, summary_openai, summary_gemini, coaching_insights, vibe_analysis = await asyncio.gather(
+                    tasks_task, openai_task, gemini_task, coaching_task, vibe_task, return_exceptions=True
                 )
             except Exception:
                 # Fallback if parallel fails
                 tasks_dict = {"tasks": []}
-                summary_openai = None
-                summary_gemini = None
+                summary_openai, summary_gemini, coaching_insights, vibe_analysis = None, None, None, None
         else:
             # Standard path: clean first, then parallel processing
             try:
@@ -124,6 +331,8 @@ async def process_transcript(request: TranscriptRequest):
             # Run all AI calls in parallel
             tasks_task = asyncio.create_task(reasoning_service.extract_tasks(sections, timezone=request.timezone))
             gemini_task = asyncio.create_task(gemini_service.generate_summary_gemini(text))
+            coaching_task = asyncio.create_task(coaching_service.generate_coaching_insights(text, context))
+            vibe_task = asyncio.create_task(vibe_service.analyze_vibe(text, context))
             
             # Wait for tasks first, then use for OpenAI summary
             try:
@@ -135,11 +344,11 @@ async def process_transcript(request: TranscriptRequest):
             openai_task = asyncio.create_task(reasoning_service.generate_summary(sections, tasks_list))
             
             try:
-                summary_openai, summary_gemini = await asyncio.gather(
-                    openai_task, gemini_task, return_exceptions=True
+                summary_openai, summary_gemini, coaching_insights, vibe_analysis = await asyncio.gather(
+                    openai_task, gemini_task, coaching_task, vibe_task, return_exceptions=True
                 )
             except Exception:
-                summary_openai = summary_gemini = None
+                summary_openai, summary_gemini, coaching_insights, vibe_analysis = None, None, None, None
 
         # Normalize results
         tasks_list = tasks_dict.get("tasks", []) if isinstance(tasks_dict, dict) else []
@@ -151,24 +360,17 @@ async def process_transcript(request: TranscriptRequest):
         if isinstance(summary_gemini, Exception):
             print(f"[FAST] Gemini failed: {summary_gemini}")
             summary_gemini = None
+        if isinstance(coaching_insights, Exception):
+            print(f"[FAST] Coaching failed: {coaching_insights}")
+            coaching_insights = None
+        if isinstance(vibe_analysis, Exception):
+            print(f"[FAST] Vibe check failed: {vibe_analysis}")
+            vibe_analysis = None
 
         duration = (datetime.utcnow() - start_ts).total_seconds()
         print(f"[FAST] Completed in {duration:.1f}s")
 
-        # Analytics (fire and forget)
-        try:
-            analytics_service.track_event(
-                user_id=request.user_id,
-                event_name="transcript_processed_fast",
-                properties={
-                    "word_count": word_count,
-                    "task_count": len(tasks_list),
-                    "duration_s": duration,
-                    "fast_path": word_count < 200
-                }
-            )
-        except:
-            pass
+        # Analytics removed for simplicity
 
         if not summary_openai and not summary_gemini:
             raise Exception("Both AI summaries failed. Check API keys and network.")
@@ -177,6 +379,8 @@ async def process_transcript(request: TranscriptRequest):
             "tasks": tasks_list,
             "summary_openai": summary_openai,
             "summary_gemini": summary_gemini,
+            "coaching_insights": coaching_insights,
+            "vibe_analysis": vibe_analysis,
             "summary": summary_openai or summary_gemini,
             "word_count": word_count,
             "duration_s": duration,
@@ -314,6 +518,101 @@ async def get_gemini_summary(request: TranscriptRequest):
         return {"summary": summary, "status": "success"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/interactive/scenarios")
+async def generate_interactive_scenarios(request: InteractiveRequest):
+    """Generate interactive coaching scenarios"""
+    try:
+        scenarios = await interactive_coaching_service.generate_interactive_scenarios(
+            request.transcript, 
+            request.context, 
+            request.coaching_insights
+        )
+        return {"scenarios": scenarios, "status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/interactive/feedback")
+async def provide_interactive_feedback(request: FeedbackRequest):
+    """Provide feedback on user's response in interactive mode"""
+    try:
+        if request.scenario_type == "lecture_practice":
+            feedback = await interactive_coaching_service.generate_conceptual_explanation(
+                request.original_question,
+                request.user_response, 
+                request.context
+            )
+        else:
+            feedback = await interactive_coaching_service.provide_response_feedback(
+                request.original_question,
+                request.user_response,
+                request.context,
+                request.coaching_tip
+            )
+        return feedback
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/conversation/start")
+async def start_conversation(request: ConversationStartRequest):
+    """Start a new conversational practice session"""
+    try:
+        session_data = await interactive_coaching_service.start_conversation_session(
+            request.transcript,
+            request.context,
+            request.coaching_insights
+        )
+        
+        # Also generate the audio for the opening message
+        if session_data.get("opening_message"):
+            audio_data = await tts_service.text_to_speech(session_data["opening_message"])
+            
+            # Return both text and audio in base64
+            import base64
+            audio_base64 = base64.b64encode(audio_data).decode('utf-8')
+            session_data["opening_audio"] = audio_base64
+        
+        return {"session": session_data, "status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/conversation/continue")
+async def continue_conversation(request: ConversationContinueRequest):
+    """Continue the conversational practice session"""
+    try:
+        response_data = await interactive_coaching_service.continue_conversation(
+            request.user_message,
+            request.conversation_history,
+            request.context_data,
+            request.session_type
+        )
+        
+        # Generate audio for the assistant's response
+        if response_data.get("assistant_message"):
+            audio_data = await tts_service.text_to_speech(response_data["assistant_message"])
+            
+            # Return both text and audio in base64
+            import base64
+            audio_base64 = base64.b64encode(audio_data).decode('utf-8')
+            response_data["audio"] = audio_base64
+        
+        return response_data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/conversation/speak")
+async def speak_text(text: str):
+    """Convert text to speech for conversation"""
+    try:
+        audio_data = await tts_service.text_to_speech(text)
+        return StreamingResponse(
+            iter([audio_data]),
+            media_type="audio/mpeg",
+            headers={"Content-Disposition": "inline; filename=speech.mp3"}
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

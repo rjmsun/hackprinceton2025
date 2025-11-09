@@ -11,7 +11,8 @@ export default function RecordingPanel({
   onProcessingChange,
   onTasksExtracted,
   onSummaryGenerated,
-  onTranscriptFinalized
+  onTranscriptFinalized,
+  mediaType = 'audio'
 }: any) {
   const [isRecording, setIsRecording] = useState(false)
   const [transcript, setTranscript] = useState('')
@@ -92,7 +93,7 @@ export default function RecordingPanel({
       const transcriptText = response.data.transcript
       setTranscript(transcriptText)
       onTranscriptUpdate(transcriptText)
-      onTranscriptFinalized(transcriptText)
+      onTranscriptFinalized(transcriptText, response.data)
 
     } catch (error: any) {
       console.error('Transcription error:', error)
@@ -126,11 +127,19 @@ export default function RecordingPanel({
 
       console.log(`Uploading file: ${file.name}, size: ${(file.size / 1024 / 1024).toFixed(2)}MB, type: ${file.type}`)
 
-      const response = await axios.post(`${API_URL}/transcribe/file?validate=true`, formData, {
+      // Only analyze video if mediaType is video AND file is actually a video
+      const isVideoFile = (mediaType === 'video') && (file.type.startsWith('video/') || file.name.toLowerCase().includes('.mp4'))
+      const queryParams = new URLSearchParams({
+        validate: mediaType === 'audio' ? 'true' : 'false',  // Validate audio, skip for video (speed)
+        analyze_video: isVideoFile ? 'true' : 'false',
+        vision_mode: 'detailed'  // Use detailed mode for quality
+      })
+
+      const response = await axios.post(`${API_URL}/transcribe/file?${queryParams}`, formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
-        timeout: 300000, // 5 minute timeout for large files
+        timeout: 600000, // 10 minute timeout for video files
         onUploadProgress: (progressEvent) => {
           if (progressEvent.total) {
             const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total)
@@ -142,11 +151,13 @@ export default function RecordingPanel({
       const transcriptText = response.data.transcript
       setTranscript(transcriptText)
       onTranscriptUpdate(transcriptText)
-      onTranscriptFinalized(transcriptText) // Notify parent that transcript is ready
+      onTranscriptFinalized(transcriptText, response.data) // Notify parent with full response data
     } catch (error: any) {
       console.error('Upload error:', error)
       const errorMessage = error.response?.data?.detail || error.message || 'Unknown error'
-      alert(`File upload failed: ${errorMessage}\n\nCheck:\n1. Backend is running on ${API_URL}\n2. File format is supported (mp3, wav, webm, etc.)\n3. File size is under 100MB`)
+      const isVideoFile = file?.type.startsWith('video/') || file?.name.toLowerCase().includes('.mp4')
+      
+      alert(`File upload failed: ${errorMessage}\n\nCheck:\n1. Backend is running on ${API_URL}\n2. File format is supported ${isVideoFile ? '(mp4, mov, avi for video)' : '(mp3, wav, webm for audio)'}\n3. File size is under ${isVideoFile ? '200MB for video' : '100MB for audio'}\n4. ${isVideoFile ? 'ffmpeg is installed for video processing' : 'Audio codec is supported'}`)
       onTranscriptUpdate(''); // Clear placeholder
     } finally {
       setIsProcessing(false)
@@ -156,51 +167,64 @@ export default function RecordingPanel({
 
   return (
     <div className="card">
-      <h2 className="text-2xl font-bold mb-6 text-gray-800">1. Record or Upload Audio</h2>
+      <h2 className="text-2xl font-bold mb-6 text-gray-800">
+        1. Record or Upload {mediaType === 'video' ? 'Video' : 'Audio'}
+      </h2>
       
       <div className="flex gap-4 mb-6">
-        <button
-          onClick={isRecording ? stopRecording : startRecording}
-          disabled={isProcessing}
-          className={`flex-1 flex items-center justify-center gap-2 py-4 rounded-lg font-semibold transition-all ${
-            isRecording 
-              ? 'bg-red-500 hover:bg-red-600 text-white' 
-              : 'bg-indigo-600 hover:bg-indigo-700 text-white'
-          } disabled:opacity-50 disabled:cursor-not-allowed`}
-        >
-          {isRecording ? (
-            <>
-              <Square size={20} fill="white" />
-              Stop Recording
-            </>
-          ) : (
-            <>
-              <Mic size={20} />
-              Start Recording
-            </>
-          )}
+              <button
+                onClick={isRecording ? stopRecording : startRecording}
+                disabled={isProcessing || mediaType === 'video'}
+                className={`flex-1 flex items-center justify-center gap-2 py-4 rounded-lg font-semibold transition-all ${
+                  mediaType === 'video'
+                    ? 'bg-gray-400 cursor-not-allowed text-white'
+                    : isRecording 
+                      ? 'bg-red-500 hover:bg-red-600 text-white' 
+                      : 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                } disabled:opacity-50 disabled:cursor-not-allowed`}
+                title={mediaType === 'video' ? 'Video recording coming soon - use upload instead' : ''}
+              >
+                {mediaType === 'video' ? (
+                  <>
+                    <Mic size={20} />
+                    Video Recording (Coming Soon)
+                  </>
+                ) : isRecording ? (
+                  <>
+                    <Square size={20} fill="white" />
+                    Stop Recording
+                  </>
+                ) : (
+                  <>
+                    <Mic size={20} />
+                    Start Recording
+                  </>
+                )}
         </button>
 
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          disabled={isProcessing || isRecording}
-          className="px-6 py-4 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-lg font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-        >
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isProcessing || isRecording}
+                  className="px-6 py-4 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-lg font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  title={mediaType === 'video' ? 'Upload video files (mp4) - analysis coming soon' : 'Upload audio files (mp3, wav, webm)'}
+                >
           <Upload size={20} />
         </button>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="audio/*"
-          onChange={handleFileUpload}
-          className="hidden"
-        />
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept={mediaType === 'video' ? 'video/*' : 'audio/*'}
+                  onChange={handleFileUpload}
+                  className="hidden"
+                />
       </div>
 
       {isProcessing && (
         <div className="flex items-center justify-center gap-2 mb-4 text-indigo-600">
           <Loader2 className="animate-spin" size={20} />
-          <span className="font-medium">Processing audio...</span>
+          <span className="font-medium">
+            {mediaType === 'video' ? 'Processing video (audio + visual analysis)...' : 'Processing audio...'}
+          </span>
         </div>
       )}
 
