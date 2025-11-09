@@ -63,6 +63,16 @@ export default function VideoAnalysisPanel({ videoAnalysis, isProcessing }: Vide
         
         {expandedSection === 'summary' && (
           <div className="mt-3 p-4 bg-white rounded-lg border border-gray-200">
+            {videoAnalysis.visual_summary && (
+              <div className="mb-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
+                <h4 className="font-semibold text-blue-900 mb-2 flex items-center gap-2">
+                  <span>👁️</span> Visual Analysis
+                </h4>
+                <p className="text-blue-800 text-sm leading-relaxed">
+                  {videoAnalysis.visual_summary}
+                </p>
+              </div>
+            )}
             <p className="text-gray-800 leading-relaxed">
               {videoAnalysis.narrative || videoAnalysis.summary || "No narrative summary available"}
             </p>

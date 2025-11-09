@@ -262,33 +262,116 @@ class VideoAnalysisAggregator:
                     })
                     prev_text = curr_text
         
-        # Simple key scenes - just use every frame as potentially key
+        # Dynamic key scenes based on video duration - longer videos get more frames analyzed
+        if duration <= 30:  # Short videos (≤30s)
+            max_scenes = min(len(frame_results), 6)
+        elif duration <= 120:  # Medium videos (≤2min)  
+            max_scenes = min(len(frame_results), 9)
+        elif duration <= 300:  # Long videos (≤5min)
+            max_scenes = min(len(frame_results), 12)
+        else:  # Very long videos (>5min)
+            max_scenes = min(len(frame_results), 15)
+        
+        print(f"📊 Video duration: {duration:.1f}s → Using {max_scenes} key scenes from {len(frame_results)} total frames")
+        
         key_scenes = []
-        for i, frame in enumerate(frame_results[:5]):  # Max 5 scenes
+        for i, frame in enumerate(frame_results[:max_scenes]):
             if "timestamp" not in frame:
                 continue
+            
+            # Use the actual description from GPT-4o Vision, not generic labels
+            description = frame.get("description", "")
+            if not description or description == "":
+                # Fallback to constructing from available data
+                scene_type = frame.get("scene_type", "scene")
+                objects = frame.get("objects", [])
+                if objects:
+                    description = f"{scene_type.capitalize()} with {', '.join(objects[:3])}"
+                else:
+                    description = f"{scene_type.capitalize()} view"
+            
+            # Count faces/people
+            faces = frame.get("faces_count", 0) or frame.get("people_count", 0) or (1 if "person" in frame.get("objects", []) else 0)
+            
             key_scenes.append({
                 "timestamp": frame["timestamp"],
-                "description": f"Scene {i+1}: {frame.get('scene_type', 'unknown')}",
-                "importance": 1,
+                "description": description,
+                "importance": 2 if faces > 0 else 1,
                 "details": {
-                    "objects": frame.get("objects", [])
+                    "faces": faces,
+                    "objects": frame.get("objects", []),
+                    "text_preview": frame.get("ocr_text", "")[:100] if frame.get("has_text") else None
                 }
             })
+        
+        # Generate visual-only summary from frame descriptions
+        visual_summary = VideoAnalysisAggregator._generate_visual_summary(frame_results, key_scenes)
         
         return {
             "total_frames_analyzed": total_frames,
             "video_duration_seconds": duration,
-            "key_scenes": key_scenes[:10],  # Top 10 most important
+            "key_scenes": key_scenes,  # Dynamic number based on video length
             "emotions_timeline": emotions_timeline,
             "slide_changes": slide_changes,
             "scene_changes": scene_changes,
             "has_slides": len(slide_changes) > 0,
             "has_faces": any(f.get("faces_count", 0) > 0 for f in frame_results),
+            "visual_summary": visual_summary,
             "summary": f"Analyzed {total_frames} frames over {duration:.1f}s. "
                       f"Found {len(key_scenes)} key moments, {len(slide_changes)} slide changes, "
                       f"{len(emotions_timeline)} emotion readings."
         }
+    
+    @staticmethod
+    def _generate_visual_summary(frame_results: List[Dict[str, Any]], key_scenes: List[Dict[str, Any]]) -> str:
+        """
+        Generate a brief visual-only summary from frame analysis
+        This describes what the user appears to be doing based on visual content only
+        """
+        if not frame_results:
+            return "No visual content analyzed"
+        
+        # Collect visual indicators
+        scene_types = [f.get("scene_type", "") for f in frame_results if f.get("scene_type")]
+        has_people = any(f.get("has_people", False) or f.get("faces_count", 0) > 0 for f in frame_results)
+        objects_seen = []
+        for f in frame_results:
+            objects_seen.extend(f.get("objects", []))
+        
+        # Count unique objects
+        unique_objects = list(set(objects_seen))
+        common_objects = [obj for obj in unique_objects if objects_seen.count(obj) > len(frame_results) // 3]
+        
+        # Determine activity from scene types
+        if not scene_types:
+            activity = "viewing content"
+        elif "presentation" in " ".join(scene_types).lower():
+            activity = "presenting or viewing a presentation"
+        elif "meeting" in " ".join(scene_types).lower():
+            activity = "in a meeting or video call"
+        elif "interview" in " ".join(scene_types).lower():
+            activity = "in an interview"
+        else:
+            activity = "viewing or working with content"
+        
+        # Build summary
+        summary_parts = []
+        summary_parts.append(f"The user appears to be {activity}")
+        
+        if has_people:
+            summary_parts.append("with one or more people visible")
+        
+        if common_objects:
+            obj_str = ", ".join(common_objects[:3])
+            summary_parts.append(f"Common elements include: {obj_str}")
+        
+        # Add visual descriptions from key scenes
+        if key_scenes and len(key_scenes) > 0:
+            desc = key_scenes[0].get("description", "")
+            if desc and desc not in summary_parts[0]:
+                summary_parts.append(f"Visually: {desc}")
+        
+        return ". ".join(summary_parts) + "."
     
     @staticmethod
     async def generate_narrative_summary(video_summary: Dict[str, Any], transcript: str, openai_client) -> str:
