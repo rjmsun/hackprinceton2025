@@ -28,7 +28,8 @@ export default function Home() {
   const [videoAnalysis, setVideoAnalysis] = useState<any>(null)
   const [isVideo, setIsVideo] = useState(false)
 
-  // normalize Gemini responses (in case they come as markdown JSON)
+  const { theme, toggleTheme } = useTheme()
+
   const normalizeGemini = (raw: any) => {
     if (!raw) return null
     if (typeof raw === 'string') {
@@ -118,22 +119,20 @@ export default function Home() {
       )}
 
       <div className="container mx-auto px-4 py-8">
-        <header className="sticky top-0 z-40 w-full backdrop-blur-md bg-white/40 dark:bg-gray-800/40 border-b border-white/20 dark:border-gray-700/50 shadow-sm transition-all">
+        {/* Header */}
+        <header className="sticky top-0 z-40 w-full backdrop-blur-md bg-white/40 dark:bg-[#363435] border-b border-white/20 dark:border-gray-700/50 shadow-sm transition-all">
           <div className="max-w-7xl mx-auto flex items-center justify-between px-6 py-3">
-            {/* Left side: Logo + Name */}
+
+            {/* Logo */}
             <div className="flex items-center gap-3">
               <img
-                src="/logo.svg"
+                src={theme === 'dark' ? '/logo-dark.svg' : '/logo.svg'}
                 alt="EVE Logo"
                 className="h-10 w-10 md:h-12 md:w-12 object-contain transition-transform duration-300 hover:scale-105 dark:drop-shadow-[0_0_0.5rem_#6366f1]"
               />
               <div>
-                <h1 className="text-2xl font-bold text-gray-800 dark:text-gray-100 tracking-tight">
-                  EVE
-                </h1>
-                <p className="text-sm text-gray-600 dark:text-gray-400">
-                  Your Everyday Virtual Executive
-                </p>
+                <h1 className="text-2xl font-bold text-gray-800 dark:text-textdark tracking-tight">EVE</h1>
+                <p className="text-sm text-gray-600 dark:text-textmuted">Your Everyday Virtual Executive</p>
               </div>
             </div>
 
